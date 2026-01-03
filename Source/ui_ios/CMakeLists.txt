@@ -41,60 +41,126 @@ if(USE_GSH_VULKAN)
 		)
 	endif()
 	list(INSERT UI_IOS_PROJECT_LIBS 0 gsh_vulkan)
-	list(APPEND UI_IOS_DEFINITIONS_LIST USE_GSH_VULKAN)
+	list(APPEND UI_IOS_DEFINITIONS_LIST HAS_GSH_VULKAN=1)
 endif()
 
-file(GLOB_RECURSE RESOURCES
-	${CMAKE_CURRENT_SOURCE_DIR}/Assets.xcassets/*
-	${CMAKE_CURRENT_SOURCE_DIR}/Base.lproj/*
-)
+if(NOT TARGET sh_openal)
+	add_subdirectory(
+		${CMAKE_CURRENT_SOURCE_DIR}/../sound/SH_OpenAL
+		${CMAKE_CURRENT_BINARY_DIR}/SH_OpenAL
+	)
+endif()
+list(APPEND UI_IOS_PROJECT_LIBS sh_openal)
+
+if(NOT TARGET iCade_Static)
+	add_subdirectory(
+		${CMAKE_CURRENT_SOURCE_DIR}/../../deps/Dependencies/build_cmake/iCade-iOS
+		${CMAKE_CURRENT_BINARY_DIR}/iCade-iOS
+	)
+endif()
+list(APPEND UI_IOS_PROJECT_LIBS iCade_Static)
+
+if(NOT TARGET SDWebImage_Static)
+	add_subdirectory(
+		${CMAKE_CURRENT_SOURCE_DIR}/../../deps/Dependencies/build_cmake/SDWebImage
+		${CMAKE_CURRENT_BINARY_DIR}/SDWebImage
+	)
+endif()
+list(APPEND UI_IOS_PROJECT_LIBS SDWebImage_Static)
+
+if(NOT TARGET ui_shared)
+	add_subdirectory(
+		${CMAKE_CURRENT_SOURCE_DIR}/../ui_shared
+		${CMAKE_CURRENT_BINARY_DIR}/ui_shared
+	)
+endif()
+list(APPEND UI_IOS_PROJECT_LIBS ui_shared)
+
+if(NOT TARGET AltKit)
+	add_subdirectory(
+		${CMAKE_CURRENT_SOURCE_DIR}/../../deps/AltKit
+		${CMAKE_CURRENT_BINARY_DIR}/AltKit
+	)
+endif()
+list(APPEND UI_IOS_PROJECT_LIBS AltKit)
+
+find_library(UIKIT_LIBRARY NAMES UIKit)
+find_library(COREGRAPHICS_LIBRARY NAMES CoreGraphics)
+find_library(GAMECONTROLLER_LIBRARY NAMES GameController)
+find_library(QUARTZCORE_LIBRARY NAMES QuartzCore)
+find_library(IMAGEIO_LIBRARY NAMES ImageIO)
 
 set(OSX_SOURCES
+	AltServerJitService.mm
 	AppDelegate.mm
+	BackgroundLayer.m
+	CoverViewCell.m
+	CoverViewController.mm
+	DebuggerSimulator.cpp
+	EmulatorViewController.mm
 	GSH_OpenGLiOS.cpp
-	iOSJitService.mm
-	MainViewController.mm
-	OptionsViewController.mm
-	PlayViewController.mm
-	SettingViewController.mm
-	VulkanViewController.mm
-	# JIT Support (iOS 26)
+	main.mm
+	PreferenceDefs.h
+	RenderView.mm
+	SaveStateViewController.m
+	SettingsListSelectorViewController.mm
+	SettingsViewController.mm
+	VirtualPadButton.mm
+	VirtualPadItem.mm
+	VirtualPadStick.mm
+	VirtualPadView.mm
 	JIT/DualMapping.mm
 	JIT/JITManager.mm
-)
+	)
 
 set(OSX_HEADERS
-	AppDelegate.h
 	AltServerJitService.h
-	iOSJitService.h
-	MainViewController.h
-	OptionsViewController.h
-	PlayViewController.h
-	SettingViewController.h
-	VulkanViewController.h
-	# JIT Support (iOS 26)
+	AppDelegate.h
+	BackgroundLayer.h
+	CoverViewCell.h
+	CoverViewController.h
+	DebuggerSimulator.h
+	EmulatorViewController.h
+	GSH_OpenGLiOS.h
+	RenderView.h
+	SaveStateViewController.h
+	SettingsListSelectorViewController.h
+	SettingsViewController.h
+	VirtualPadButton.h
+	VirtualPadItem.h
+	VirtualPadStick.h
+	VirtualPadView.h
 	JIT/DualMapping.h
 	JIT/JITManager.h
+	)
+
+set(OSX_RES
+	${CMAKE_CURRENT_SOURCE_DIR}/../../GameConfig.xml
+	${CMAKE_CURRENT_SOURCE_DIR}/Base.lproj/Main.storyboard
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon@2x.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/boxart.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/select.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/start.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/up.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/down.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/left.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/right.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/triangle.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/cross.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/circle.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/square.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/lr.png
+	${CMAKE_CURRENT_SOURCE_DIR}/Resources/analogstick.png
 )
 
-add_executable(Play MACOSX_BUNDLE ${OSX_SOURCES} ${OSX_HEADERS} ${RESOURCES})
+if(USE_GSH_VULKAN)
+	list(APPEND OSX_SOURCES GSH_VulkaniOS.cpp)
+	list(APPEND OSX_HEADERS GSH_VulkaniOS.h)
+endif()
 
-# Include JIT headers directory
-target_include_directories(Play PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/JIT)
-
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "15.0")
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "$(inherited) @executable_path/Frameworks")
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.virtualapplications.play")
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_PRODUCT_NAME "Play")
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon")
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES")
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_WEAK "YES")
-
-# Set the SWIFT_OBJC_BRIDGING_HEADER property
-set_target_properties(Play PROPERTIES XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/Play-Bridging-Header.h")
-
-target_compile_options(Play PRIVATE $<$<COMPILE_LANGUAGE:Swift>:-x objective-c++ -fobjc-arc>)
+# Add our Executable
+add_executable(Play MACOSX_BUNDLE ${OSX_SOURCES} ${OSX_HEADERS} ${OSX_RES})
+target_compile_options(Play PRIVATE $<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-x objective-c++ -fobjc-arc>)
 
 # Probably a better way to set the framework link libraries.
 target_link_libraries(Play ${UIKIT_LIBRARY})
@@ -120,6 +186,17 @@ set_target_properties(
 		MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_Version}"
 		MACOSX_BUNDLE_BUNDLE_VERSION ${DATE}
 		MACOSX_BUNDLE_COPYRIGHT "© Virtual Applications, 2017"
-		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
+		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
+		XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+		RESOURCE "${OSX_RES}"
 		XCODE_ATTRIBUTE_ENABLE_USER_SCRIPT_SANDBOXING "NO"
-)
+		)
+
+if(USE_GSH_VULKAN)
+	set_target_properties(
+		Play
+		PROPERTIES
+			XCODE_EMBED_FRAMEWORKS "$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework"
+			XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY TRUE
+	)
+endif()
