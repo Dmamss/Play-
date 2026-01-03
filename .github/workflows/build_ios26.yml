@@ -47,8 +47,10 @@ jobs:
       run: |
         cd installer_ios
         ./build_ipa.sh
-   
-    - name: Upload a Build Artifact ipa/deb/bz2
+    - name: Generate Cydia Package
+      run: |
+        cd installer_ios
+        ./build_cydia.sh    - name: Upload a Build Artifact ipa/deb/bz2
       uses: actions/upload-artifact@v4
       with:
         name: Play_iOS
