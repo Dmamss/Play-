@@ -109,6 +109,10 @@ set(OSX_SOURCES
 	VirtualPadItem.mm
 	VirtualPadStick.mm
 	VirtualPadView.mm
+	iOSJitService.mm
+	# JIT Support (iOS 26) - Étape 2.1
+	JIT/DualMapping.mm
+	JIT/JITManager.mm
 )
 
 set(OSX_HEADERS
@@ -128,6 +132,10 @@ set(OSX_HEADERS
 	VirtualPadItem.h
 	VirtualPadStick.h
 	VirtualPadView.h
+	iOSJitService.h
+	# JIT Support (iOS 26) - Étape 2.2
+	JIT/DualMapping.h
+	JIT/JITManager.h
 )
 
 set(OSX_RES
@@ -156,6 +164,10 @@ endif()
 
 # Add our Executable
 add_executable(Play MACOSX_BUNDLE ${OSX_SOURCES} ${OSX_HEADERS} ${OSX_RES})
+
+# Include JIT headers directory - Étape 2.3
+target_include_directories(Play PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/JIT)
+
 target_compile_options(Play PRIVATE $<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-x objective-c++ -fobjc-arc>)
 
 # Probably a better way to set the framework link libraries.
@@ -169,8 +181,6 @@ target_link_libraries(Play ${UI_IOS_PROJECT_LIBS} "-ObjC -lsqlite3 -framework Op
 target_compile_definitions(Play PRIVATE ${UI_IOS_DEFINITIONS_LIST})
 
 # Set a custom plist file for the app bundle
-# NOTE: for these values to be used Info.plist has to be edited
-# NOTE: from cmake 3.7.0 you can use %b for month name abbreviations
 string(TIMESTAMP DATE "%Y-%m-%d")
 set_target_properties(
 	Play
@@ -185,6 +195,8 @@ set_target_properties(
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
 		XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
 		RESOURCE "${OSX_RES}"
+		# Désactivation du Sandboxing pour le JIT - Étape 2.4
+		XCODE_ATTRIBUTE_ENABLE_USER_SCRIPT_SANDBOXING "NO"
 )
 
 if(USE_GSH_VULKAN)
