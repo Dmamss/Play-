@@ -27,8 +27,9 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-        # Get current branch name
-        BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+        # Get current branch name from GitHub context
+        BRANCH_NAME="${GITHUB_REF_NAME}"
+        echo "Current branch: $BRANCH_NAME"
 
         if [ -n "$(git status --porcelain)" ]; then
           git add .
