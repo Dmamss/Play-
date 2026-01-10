@@ -1,0 +1,145 @@
+name: iOS Build Debug
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+jobs:
+  debug_ios_build:
+    runs-on: macos-latest
+    steps:
+    - name: Set Xcode version
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: 16.4
+
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: System Info
+      run: |
+        echo "=== System Information ==="
+        sw_vers
+        xcodebuild -version
+        echo ""
+        echo "=== Available SDKs ==="
+        xcodebuild -showsdks
+        echo ""
+        echo "=== CMake Version ==="
+        cmake --version
+
+    - name: Check Submodules
+      run: |
+        echo "=== Submodule Status ==="
+        git submodule status
+        echo ""
+        echo "=== Critical Files Check ==="
+        ls -la Source/ui_ios/Info.plist.in || echo "Info.plist.in MISSING"
+        ls -la Source/ui_ios/Base.lproj/Main.storyboard || echo "Main.storyboard MISSING"
+        ls -la deps/Dependencies/cmake-ios/ios.cmake || echo "ios.cmake MISSING"
+        ls -la deps/BreakpointJIT/BreakpointJIT.framework || echo "BreakpointJIT MISSING"
+
+    - name: Install Vulkan SDK
+      continue-on-error: true
+      id: vulkan
+      run: |
+        echo "=== Installing Vulkan SDK ==="
+        cd $RUNNER_WORKSPACE
+        curl -L --show-error --output vulkansdk.zip https://sdk.lunarg.com/sdk/download/1.4.309.0/mac/vulkansdk-macos-1.4.309.0.zip?Human=true || {
+          echo "Failed to download Vulkan SDK"
+          exit 1
+        }
+        unzip vulkansdk.zip || {
+          echo "Failed to unzip Vulkan SDK"
+          exit 1
+        }
+        sudo ./InstallVulkan-1.4.309.0.app/Contents/MacOS/InstallVulkan-1.4.309.0 in --al --c com.lunarg.vulkan.ios || {
+          echo "Failed to install Vulkan SDK"
+          exit 1
+        }
+        echo "VULKAN_SDK=${HOME}/VulkanSDK/1.4.309.0/iOS" >> $GITHUB_ENV
+        echo "Vulkan SDK installed at: ${HOME}/VulkanSDK/1.4.309.0/iOS"
+
+    - name: Verify Vulkan Installation
+      if: steps.vulkan.outcome == 'success'
+      run: |
+        echo "=== Vulkan SDK Check ==="
+        ls -la ${HOME}/VulkanSDK/1.4.309.0/iOS || echo "Vulkan iOS SDK not found"
+
+    - name: Generate CMake Project (Verbose)
+      run: |
+        echo "=== CMake Configuration ==="
+        mkdir build
+        cd build
+
+        # Try with Vulkan if available
+        if [ -d "${HOME}/VulkanSDK/1.4.309.0/iOS" ]; then
+          echo "Configuring WITH Vulkan support"
+          cmake .. \
+            -G "Xcode" \
+            -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
+            -DTARGET_IOS=ON \
+            -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
+            -DBUILD_PSFPLAYER=OFF \
+            -DBUILD_LIBRETRO_CORE=OFF \
+            --debug-output 2>&1 | tee cmake_config.log
+        else
+          echo "Configuring WITHOUT Vulkan support"
+          cmake .. \
+            -G "Xcode" \
+            -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
+            -DTARGET_IOS=ON \
+            -DBUILD_PSFPLAYER=OFF \
+            -DBUILD_LIBRETRO_CORE=OFF \
+            --debug-output 2>&1 | tee cmake_config.log
+        fi
+
+        echo ""
+        echo "=== Generated Xcode Projects ==="
+        find . -name "*.xcodeproj" -type d
+
+    - name: List Build Targets
+      run: |
+        cd build
+        echo "=== Available Build Targets ==="
+        xcodebuild -list -project Play.xcodeproj || echo "Could not list targets"
+
+    - name: Build (Verbose)
+      run: |
+        cd build
+        echo "=== Starting Xcode Build ==="
+        cmake --build . --config Release --verbose 2>&1 | tee build.log
+
+    - name: Check Build Artifacts
+      if: always()
+      run: |
+        echo "=== Build Directory Structure ==="
+        find build -type d -name "Release-iphoneos" || echo "No Release-iphoneos directory"
+        echo ""
+        echo "=== Looking for Play.app ==="
+        find build -name "Play.app" -type d || echo "Play.app not found"
+        echo ""
+        if [ -d "build/Source/ui_ios/Release-iphoneos/Play.app" ]; then
+          echo "=== Play.app Contents ==="
+          ls -lah build/Source/ui_ios/Release-iphoneos/Play.app/
+        fi
+
+    - name: Upload Build Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-logs
+        path: |
+          build/cmake_config.log
+          build/build.log
+          build/**/*.log
+
+    - name: Upload App (if built)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-app
+        path: build/Source/ui_ios/Release-iphoneos/Play.app
+        if-no-files-found: ignore
