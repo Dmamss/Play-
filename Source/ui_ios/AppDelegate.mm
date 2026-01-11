@@ -3,6 +3,7 @@
 #include "../gs/GSH_OpenGL/GSH_OpenGL.h"
 #include "DebuggerSimulator.h"
 #import "StikDebugJitService.h"
+#include "PlayJIT.h"
 
 @interface AppDelegate ()
 
@@ -12,7 +13,10 @@
 
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions
 {
-	// Initialize StikDebug JIT service for iOS 26+
+	// Initialize PlayJIT subsystem (must be called first)
+	PlayJIT_Initialize();
+
+	// Register StikDebug JIT preferences
 	[[StikDebugJitService sharedService] registerPreferences];
 
 	[EmulatorViewController registerPreferences];
@@ -50,6 +54,7 @@
 
 - (void)applicationWillTerminate:(UIApplication*)application
 {
+	PlayJIT_Shutdown();
 	StopSimulateDebugger();
 }
 
