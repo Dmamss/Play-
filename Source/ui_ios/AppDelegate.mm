@@ -12,25 +12,24 @@
 
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions
 {
-	[[StikDebugJitService sharedService] initialize];
+	// Initialize StikDebug JIT service for iOS 26+
+	[[StikDebugJitService sharedService] registerPreferences];
 
-	if([[StikDebugJitService sharedService] isJitActive])
-	{
-		[[StikDebugJitService sharedService] setEnvironmentForJIT];
-	}
-	-(BOOL)application : (UIApplication*)app openURL : (NSURL*)url options : (NSDictionary<UIApplicationOpenURLOptionsKey, id>*)options
-	{
-		// Handle StikDebug callback
-		if([[StikDebugJitService sharedService] handleCallbackURL:url])
-		{
-			return YES;
-		}
-
-		return NO;
-	}
 	[EmulatorViewController registerPreferences];
 	CGSH_OpenGL::RegisterPreferences();
 	return YES;
+}
+
+- (BOOL)application:(UIApplication*)app openURL:(NSURL*)url options:(NSDictionary<UIApplicationOpenURLOptionsKey, id>*)options
+{
+	// Handle play-jit:// URL scheme callback from StikDebug
+	if([url.scheme isEqualToString:@"play-jit"])
+	{
+		NSLog(@"[AppDelegate] Received StikDebug callback: %@", url);
+		return YES;
+	}
+
+	return NO;
 }
 
 - (void)applicationWillResignActive:(UIApplication*)application
