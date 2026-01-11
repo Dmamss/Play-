@@ -110,19 +110,27 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (BOOL)detectTXM
 {
+	// Check environment variable first (can be set by user or StikDebug)
+	const char* env = getenv("HAS_TXM");
+	if(env && strcmp(env, "1") == 0)
+	{
+		return YES;
+	}
+
 	// iOS 26+ required
 	if(_iosVersion < 26.0f)
 	{
 		return NO;
 	}
 
-	// Check chip (A15+ / M2+ have TXM)
+	// Check chip (A14+ / M2+ have TXM on iOS 26)
 	uint32_t cpufamily = 0;
 	size_t size = sizeof(cpufamily);
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &size, NULL, 0) == 0)
 	{
 		switch(cpufamily)
 		{
+		case 0x07D34B9F: // A14 Bionic (iPhone 12, iPad Air 4)
 		case 0xDA33D83D: // A15 Bionic
 		case 0x8765EDEA: // A16 Bionic
 		case 0xFA33415E: // A17 Pro
@@ -137,14 +145,8 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		}
 	}
 
-	// Fallback: Try mmap to detect if TXM blocks it
-	void* test = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
-	                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
-	if(test == MAP_FAILED)
-	{
-		return YES; // TXM is blocking
-	}
-	munmap(test, 4096);
+	// No fallback mmap test - too risky at startup
+	// If chip is unknown, assume no TXM (user can set HAS_TXM=1 env var if needed)
 	return NO;
 }
 

@@ -139,14 +139,8 @@ static bool detectTXM(void)
 		}
 	}
 
-	// Fallback: Try MAP_JIT to detect if TXM blocks it
-	void* test = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
-	                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
-	if(test == MAP_FAILED)
-	{
-		return true; // TXM is blocking JIT
-	}
-	munmap(test, 4096);
+	// No fallback mmap test - too risky at startup
+	// If chip is unknown, assume no TXM (user can set HAS_TXM=1 env var if needed)
 	return false;
 }
 
