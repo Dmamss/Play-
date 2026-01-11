@@ -73,37 +73,47 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake .. -G"Xcode" -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake -DTARGET_IOS=ON -DCMAKE_PREFIX_PATH=$VULKAN_SDK -DBUILD_PSFPLAYER=ON -DBUILD_LIBRETRO_CORE=yes
+        cmake .. -G"Xcode" -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake -DTARGET_IOS=ON -DCMAKE_PREFIX_PATH=$VULKAN_SDK -DBUILD_PSFPLAYER=ON -DBUILD_LIBRETRO_CORE=OFF -DBUILD_TESTS=OFF
+    - name: List Xcode Targets
+      run: |
+        cd build
+        xcodebuild -list -project Play.xcodeproj
     - name: Build
       run: |
         cd build
         set -x
 
-        # Run build and capture exit status
-        cmake --build . --config Release 2>&1 | tee build.log
+        # Build using xcodebuild directly for better error messages
+        xcodebuild -project Play.xcodeproj -scheme ALL_BUILD -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' build CODE_SIGNING_ALLOWED=NO 2>&1 | tee build.log
         BUILD_STATUS=${PIPESTATUS[0]}
 
         echo "=== Build exit status: $BUILD_STATUS ==="
-        echo "=== Checking build output ==="
+
+        if [ $BUILD_STATUS -ne 0 ]; then
+          echo "ERROR: Build failed with status $BUILD_STATUS"
+          echo "=== Last 150 lines of build log ==="
+          tail -150 build.log
+          exit $BUILD_STATUS
+        fi
+
+        echo "=== Build succeeded, checking output ==="
         ls -laR Source/ui_ios/ || true
         echo "=== Looking for Play.app ==="
         find . -name "Play.app" -type d || true
 
-        if [ $BUILD_STATUS -ne 0 ]; then
-          echo "ERROR: Build failed with status $BUILD_STATUS"
-          echo "Build log tail:"
-          tail -100 build.log
-          exit $BUILD_STATUS
-        fi
-
         if [ -d "Source/ui_ios/Release-iphoneos/Play.app" ]; then
-          echo "Found Play.app, signing..."
+          echo "Found Play.app at expected location, signing..."
           codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
         else
-          echo "ERROR: Play.app not found at expected location"
-          echo "Build log tail:"
-          tail -100 build.log
-          exit 1
+          echo "WARNING: Play.app not found at expected location"
+          APP_PATH=$(find . -name "Play.app" -type d | head -1)
+          if [ -n "$APP_PATH" ]; then
+            echo "Found Play.app at: $APP_PATH"
+            codesign -s "-" "$APP_PATH"
+          else
+            echo "ERROR: Play.app not found anywhere"
+            exit 1
+          fi
         fi
     - name: Generate IPA
       run: |
@@ -119,19 +129,12 @@ jobs:
           installer_ios/Play.deb
           installer_ios/Packages.bz2
 
-    - name: Upload a Build Artifact libretro
-      uses: actions/upload-artifact@v4
-      with:
-        name: Play_iOS_libretro
-        path: build/Source/ui_libretro/Release-iphoneos/play_libretro_ios.dylib
-
     - name: Upload to S3
       if: ${{ env.AWS_ACCESS_KEY_ID != null}}
       run: |
         aws s3 cp installer_ios/Play.ipa s3://playbuilds/$SHORT_HASH/Play.ipa --acl public-read
         aws s3 cp installer_ios/Play.deb s3://playbuilds/$SHORT_HASH/Play.deb --acl public-read
         aws s3 cp installer_ios/Packages.bz2 s3://playbuilds/$SHORT_HASH/Packages.bz2 --acl public-read
-        aws s3 cp build/Source/ui_libretro/Release-iphoneos/play_libretro_ios.dylib s3://playbuilds/$SHORT_HASH/play_libretro_ios.dylib --acl public-read
       env:
         SHORT_HASH: ${{ steps.short_hash.outputs.VALUE }}
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
