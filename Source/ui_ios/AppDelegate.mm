@@ -13,7 +13,15 @@
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions
 {
 	// Initialize StikDebug JIT service
-	[[StikDebugJitService sharedService] registerPreferences];
+	StikDebugJitService* jitService = [StikDebugJitService sharedService];
+	[jitService registerPreferences];
+
+	// Set TXM environment variable for CodeGen
+	if([jitService hasTXM])
+	{
+		setenv("PLAY_HAS_TXM", "1", 1);
+		NSLog(@"[AppDelegate] TXM mode enabled for CodeGen");
+	}
 
 	[EmulatorViewController registerPreferences];
 	CGSH_OpenGL::RegisterPreferences();
