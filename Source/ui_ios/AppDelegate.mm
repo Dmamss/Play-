@@ -12,22 +12,9 @@
 
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions
 {
-	[[StikDebugJitService sharedService] initialize];
+	// Initialize StikDebug JIT service
+	[[StikDebugJitService sharedService] registerPreferences];
 
-	if([[StikDebugJitService sharedService] isJitActive])
-	{
-		[[StikDebugJitService sharedService] setEnvironmentForJIT];
-	}
-	-(BOOL)application : (UIApplication*)app openURL : (NSURL*)url options : (NSDictionary<UIApplicationOpenURLOptionsKey, id>*)options
-	{
-		// Handle StikDebug callback
-		if([[StikDebugJitService sharedService] handleCallbackURL:url])
-		{
-			return YES;
-		}
-
-		return NO;
-	}
 	[EmulatorViewController registerPreferences];
 	CGSH_OpenGL::RegisterPreferences();
 	return YES;
