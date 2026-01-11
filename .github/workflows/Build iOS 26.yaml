@@ -20,7 +20,7 @@ jobs:
     - name: Run Clang-Format and Fix
       run: |
         # On cherche tous les fichiers et on applique le formatage
-        find ./Source ./tools -name "*.h" -o -name "*.cpp" -o -name "*.c" -o -name "*.m" -o -name "*.mm" | xargs clang-format-16 -i
+        find ./Source ./tools \( -name "*.h" -o -name "*.cpp" -o -name "*.c" -o -name "*.m" -o -name "*.mm" \) | xargs clang-format-16 -i
 
     - name: Commit and Push changes
       run: |
