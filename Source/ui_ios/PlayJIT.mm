@@ -117,13 +117,14 @@ static bool detectTXM(void)
 		return false;
 	}
 
-	// Check chip (A15+ / M2+ have TXM)
+	// Check chip (A14+ / M2+ have TXM on iOS 26)
 	uint32_t cpufamily = 0;
 	size_t size = sizeof(cpufamily);
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &size, NULL, 0) == 0)
 	{
 		switch(cpufamily)
 		{
+		case 0x07D34B9F: // A14 Bionic (iPhone 12, iPad Air 4)
 		case 0xDA33D83D: // A15 Bionic
 		case 0x8765EDEA: // A16 Bionic
 		case 0xFA33415E: // A17 Pro
