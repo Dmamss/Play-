@@ -78,18 +78,31 @@ jobs:
       run: |
         cd build
         set -x
+
+        # Run build and capture exit status
         cmake --build . --config Release 2>&1 | tee build.log
+        BUILD_STATUS=${PIPESTATUS[0]}
+
+        echo "=== Build exit status: $BUILD_STATUS ==="
         echo "=== Checking build output ==="
         ls -laR Source/ui_ios/ || true
         echo "=== Looking for Play.app ==="
         find . -name "Play.app" -type d || true
+
+        if [ $BUILD_STATUS -ne 0 ]; then
+          echo "ERROR: Build failed with status $BUILD_STATUS"
+          echo "Build log tail:"
+          tail -100 build.log
+          exit $BUILD_STATUS
+        fi
+
         if [ -d "Source/ui_ios/Release-iphoneos/Play.app" ]; then
           echo "Found Play.app, signing..."
           codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
         else
           echo "ERROR: Play.app not found at expected location"
           echo "Build log tail:"
-          tail -50 build.log
+          tail -100 build.log
           exit 1
         fi
     - name: Generate IPA
