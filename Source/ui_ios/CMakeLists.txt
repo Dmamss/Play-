@@ -92,7 +92,8 @@ find_library(IMAGEIO_LIBRARY NAMES ImageIO)
 
 set(OSX_SOURCES
 	AltServerJitService.mm
-	StikDebugJitService.mm 
+	StikDebugJitService.mm
+	PlayJIT.mm
 	AppDelegate.mm
 	BackgroundLayer.m
 	CoverViewCell.m
@@ -114,8 +115,10 @@ set(OSX_SOURCES
 
 set(OSX_HEADERS
 	AltServerJitService.h
-	StikDebugJitService.h 
-	Bridging-Header.h	
+	StikDebugJitService.h
+	PlayJIT.h
+	PlayJIT-Bridging-Header.h
+	Bridging-Header.h
 	AppDelegate.h
 	BackgroundLayer.h
 	CoverViewCell.h
@@ -168,12 +171,13 @@ target_link_libraries(Play ${GAMECONTROLLER_LIBRARY})
 target_link_libraries(Play ${QUARTZCORE_LIBRARY})
 target_link_libraries(Play ${IMAGEIO_LIBRARY})
 target_link_libraries(Play ${UI_IOS_PROJECT_LIBS} "-ObjC -lsqlite3 -framework OpenAL")
+target_link_libraries(Play "-framework BreakpointJIT")
 target_include_directories(Play PRIVATE
-    "${CMAKE_SOURCE_DIR}/Source/ui_ios/BreakpointJIT/BreakpointJIT.framework/Headers"
+    "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT/BreakpointJIT.framework/Headers"
 )
 
 # BreakpointJIT framework search path
-target_link_options(Play PRIVATE "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT")
+target_link_options(Play PRIVATE "-F${CMAKE_SOURCE_DIR}/deps/BreakpointJIT")
 target_compile_definitions(Play PRIVATE ${UI_IOS_DEFINITIONS_LIST})
 
 # Set a custom plist file for the app bundle
@@ -194,13 +198,14 @@ set_target_properties(
 		XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
 		RESOURCE "${OSX_RES}"
 		XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT"
+		XCODE_EMBED_FRAMEWORKS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT/BreakpointJIT.framework"
+		XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY TRUE
 		)
 
 if(USE_GSH_VULKAN)
 	set_target_properties(
 		Play
 		PROPERTIES
-			XCODE_EMBED_FRAMEWORKS "$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework"
-			XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY TRUE
+			XCODE_EMBED_FRAMEWORKS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT/BreakpointJIT.framework;$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework"
 	)
 endif()
