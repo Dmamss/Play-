@@ -41,6 +41,11 @@ jobs:
       uses: maxim-lobanov/setup-xcode@v1
       with:
         xcode-version: latest-stable
+    - name: Verify Xcode Setup
+      run: |
+        xcodebuild -version
+        xcode-select -p
+        xcrun --show-sdk-path --sdk iphoneos
     - name: Install dpkg
       run: brew install dpkg
     - name: Install Vulkan SDK
@@ -72,8 +77,21 @@ jobs:
     - name: Build
       run: |
         cd build
-        cmake --build . --config Release
-        codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
+        set -x
+        cmake --build . --config Release 2>&1 | tee build.log
+        echo "=== Checking build output ==="
+        ls -laR Source/ui_ios/ || true
+        echo "=== Looking for Play.app ==="
+        find . -name "Play.app" -type d || true
+        if [ -d "Source/ui_ios/Release-iphoneos/Play.app" ]; then
+          echo "Found Play.app, signing..."
+          codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
+        else
+          echo "ERROR: Play.app not found at expected location"
+          echo "Build log tail:"
+          tail -50 build.log
+          exit 1
+        fi
     - name: Generate IPA
       run: |
         cd installer_ios
