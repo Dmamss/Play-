@@ -150,8 +150,12 @@ static NSString* const reuseIdentifier = @"coverCell";
 {
 	StikDebugJitService* jitService = [StikDebugJitService sharedService];
 
+	// Check if StikDebug is installed by testing if stikdebug:// URL scheme can be opened
+	NSURL* stikDebugURL = [NSURL URLWithString:@"stikdebug://"];
+	BOOL isStikDebugInstalled = [[UIApplication sharedApplication] canOpenURL:stikDebugURL];
+
 	NSString* message;
-	if([jitService isStikDebugInstalled])
+	if(isStikDebugInstalled)
 	{
 		message = @"iOS 26 requires JIT activation for PS2 emulation.\n\n"
 		          @"Tap 'Activate JIT' to open StikDebug and enable JIT.\n"
@@ -168,12 +172,12 @@ static NSString* const reuseIdentifier = @"coverCell";
 	                                                               message:message
 	                                                        preferredStyle:UIAlertControllerStyleAlert];
 
-	if([jitService isStikDebugInstalled])
+	if(isStikDebugInstalled)
 	{
 		UIAlertAction* activateAction = [UIAlertAction actionWithTitle:@"Activate JIT"
 		                                                         style:UIAlertActionStyleDefault
 		                                                       handler:^(UIAlertAction* action) {
-			                                                     [jitService requestActivationWithCompletion:^(BOOL success, NSError* error) {
+			                                                     [jitService requestActivation:^(BOOL success) {
 				                                                   dispatch_async(dispatch_get_main_queue(), ^{
 					                                                 if(success)
 					                                                 {
@@ -192,7 +196,7 @@ static NSString* const reuseIdentifier = @"coverCell";
 						                                                 // Show error
 						                                                 UIAlertController* errorAlert = [UIAlertController
 						                                                     alertControllerWithTitle:@"JIT Activation Failed"
-						                                                                      message:error.localizedDescription
+						                                                                      message:@"Please ensure StikDebug is running and try again."
 						                                                               preferredStyle:UIAlertControllerStyleAlert];
 						                                                 [errorAlert addAction:[UIAlertAction actionWithTitle:@"Retry"
 						                                                                                                style:UIAlertActionStyleDefault
