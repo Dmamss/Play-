@@ -320,24 +320,24 @@ static NSString* const reuseIdentifier = @"coverCell";
 				              style:UIAlertActionStyleDefault
 				            handler:^(UIAlertAction*) {
 					          [jitService requestActivation:^(BOOL success) {
-						            dispatch_async(dispatch_get_main_queue(), ^{
-							              if(success)
-							              {
-								                // JIT activated - retry launching the game
-								                [self performSegueWithIdentifier:@"showEmulator" sender:sender];
-							              }
-							              else
-							              {
-								                UIAlertController* errorAlert = [UIAlertController
-								                    alertControllerWithTitle:@"JIT Activation Failed"
-								                                     message:@"Please ensure StikDebug is running and try again."
-								                              preferredStyle:UIAlertControllerStyleAlert];
-								                [errorAlert addAction:[UIAlertAction actionWithTitle:@"OK"
-								                                                              style:UIAlertActionStyleDefault
-								                                                            handler:nil]];
-								                [self presentViewController:errorAlert animated:YES completion:nil];
-							              }
-						            });
+						        dispatch_async(dispatch_get_main_queue(), ^{
+							      if(success)
+							      {
+								      // JIT activated - retry launching the game
+								      [self performSegueWithIdentifier:@"showEmulator" sender:sender];
+							      }
+							      else
+							      {
+								      UIAlertController* errorAlert = [UIAlertController
+								          alertControllerWithTitle:@"JIT Activation Failed"
+								                           message:@"Please ensure StikDebug is running and try again."
+								                    preferredStyle:UIAlertControllerStyleAlert];
+								      [errorAlert addAction:[UIAlertAction actionWithTitle:@"OK"
+								                                                     style:UIAlertActionStyleDefault
+								                                                   handler:nil]];
+								      [self presentViewController:errorAlert animated:YES completion:nil];
+							      }
+						        });
 					          }];
 				            }];
 				[alert addAction:activateAction];
