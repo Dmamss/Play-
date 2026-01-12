@@ -287,34 +287,103 @@ static NSString* const reuseIdentifier = @"coverCell";
 {
 	if([identifier isEqualToString:@"showEmulator"] && !IsJitAvailable())
 	{
-		UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"JIT unavailable" message:@"JIT doesn't seem to be available at the moment. If JIT is not available, the emulator will crash. Do you wish to continue?" preferredStyle:UIAlertControllerStyleAlert];
+		StikDebugJitService* jitService = [StikDebugJitService sharedService];
+
+		// Check if we're on iOS 26 with TXM requiring StikDebug activation
+		if([jitService hasTXM] && [jitService needsActivation])
 		{
-			UIAlertAction* continueAction = [UIAlertAction
-			    actionWithTitle:@"Continue"
-			              style:UIAlertActionStyleDefault
-			            handler:^(UIAlertAction*) {
-				          [self performSegueWithIdentifier:@"showEmulator" sender:sender];
-			            }];
-			[alert addAction:continueAction];
-		}
-		{
+			// iOS 26 with TXM - MUST activate JIT first, no "Continue" option
+			NSURL* stikDebugURL = [NSURL URLWithString:@"stikdebug://"];
+			BOOL isStikDebugInstalled = [[UIApplication sharedApplication] canOpenURL:stikDebugURL];
+
+			NSString* message;
+			if(isStikDebugInstalled)
+			{
+				message = @"iOS 26 requires JIT activation for PS2 emulation.\n\n"
+				          @"Please tap 'Activate JIT' to enable JIT via StikDebug before playing.";
+			}
+			else
+			{
+				message = @"iOS 26 requires JIT activation for PS2 emulation.\n\n"
+				          @"Please install StikDebug from your preferred source (AltStore, SideStore, etc.) to enable JIT.";
+			}
+
+			UIAlertController* alert = [UIAlertController
+			    alertControllerWithTitle:@"JIT Activation Required"
+			                     message:message
+			              preferredStyle:UIAlertControllerStyleAlert];
+
+			if(isStikDebugInstalled)
+			{
+				UIAlertAction* activateAction = [UIAlertAction
+				    actionWithTitle:@"Activate JIT"
+				              style:UIAlertActionStyleDefault
+				            handler:^(UIAlertAction*) {
+					          [jitService requestActivation:^(BOOL success) {
+						            dispatch_async(dispatch_get_main_queue(), ^{
+							              if(success)
+							              {
+								                // JIT activated - retry launching the game
+								                [self performSegueWithIdentifier:@"showEmulator" sender:sender];
+							              }
+							              else
+							              {
+								                UIAlertController* errorAlert = [UIAlertController
+								                    alertControllerWithTitle:@"JIT Activation Failed"
+								                                     message:@"Please ensure StikDebug is running and try again."
+								                              preferredStyle:UIAlertControllerStyleAlert];
+								                [errorAlert addAction:[UIAlertAction actionWithTitle:@"OK"
+								                                                              style:UIAlertActionStyleDefault
+								                                                            handler:nil]];
+								                [self presentViewController:errorAlert animated:YES completion:nil];
+							              }
+						            });
+					          }];
+				            }];
+				[alert addAction:activateAction];
+			}
+
 			UIAlertAction* cancelAction = [UIAlertAction
 			    actionWithTitle:@"Cancel"
 			              style:UIAlertActionStyleCancel
 			            handler:^(UIAlertAction*){}];
 			[alert addAction:cancelAction];
+
+			[self presentViewController:alert animated:YES completion:nil];
+			return NO;
 		}
+		else
 		{
-			UIAlertAction* helpAction = [UIAlertAction
-			    actionWithTitle:@"Help"
-			              style:UIAlertActionStyleDefault
-			            handler:^(UIAlertAction*) {
-				          [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://github.com/jpd002/Play-#running-on-ios"]];
-			            }];
-			[alert addAction:helpAction];
+			// Legacy JIT detection (older iOS, jailbreak, etc.) - allow "Continue" option
+			UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"JIT unavailable" message:@"JIT doesn't seem to be available at the moment. If JIT is not available, the emulator will crash. Do you wish to continue?" preferredStyle:UIAlertControllerStyleAlert];
+			{
+				UIAlertAction* continueAction = [UIAlertAction
+				    actionWithTitle:@"Continue"
+				              style:UIAlertActionStyleDefault
+				            handler:^(UIAlertAction*) {
+					          [self performSegueWithIdentifier:@"showEmulator" sender:sender];
+				            }];
+				[alert addAction:continueAction];
+			}
+			{
+				UIAlertAction* cancelAction = [UIAlertAction
+				    actionWithTitle:@"Cancel"
+				              style:UIAlertActionStyleCancel
+				            handler:^(UIAlertAction*){}];
+				[alert addAction:cancelAction];
+			}
+			{
+				UIAlertAction* helpAction = [UIAlertAction
+				    actionWithTitle:@"Help"
+				              style:UIAlertActionStyleDefault
+				            handler:^(UIAlertAction*) {
+					          [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://github.com/jpd002/Play-#running-on-ios"]];
+				            }];
+				[alert addAction:helpAction];
+			}
+			[self presentViewController:alert animated:YES completion:nil];
+			return NO;
 		}
-		[self presentViewController:alert animated:YES completion:nil];
-		return NO;
 	}
 	return YES;
 }
