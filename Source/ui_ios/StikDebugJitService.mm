@@ -57,7 +57,8 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		_initialized = NO;
 		_txmActive = NO;
 		_iosVersion = 0.0f;
-		[self initialize];
+		// DO NOT call [self initialize] here - causes crash at startup
+		// Will be initialized lazily when first accessed
 	}
 	return self;
 }
@@ -181,21 +182,25 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (BOOL)hasTXM
 {
+	[self initialize]; // Lazy init
 	return _txmActive;
 }
 
 - (float)iosVersion
 {
+	[self initialize]; // Lazy init
 	return _iosVersion;
 }
 
 - (BOOL)txmActive
 {
+	[self initialize]; // Lazy init
 	return _txmActive;
 }
 
 - (BOOL)isJitAvailable
 {
+	[self initialize]; // Lazy init
 	if(!_txmActive)
 	{
 		return YES; // No TXM = JIT always available
@@ -205,11 +210,13 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (BOOL)jitEnabled
 {
+	[self initialize]; // Lazy init
 	return [self isJitAvailable];
 }
 
 - (BOOL)needsActivation
 {
+	[self initialize]; // Lazy init
 	return _txmActive && ![self isDebuggerAttached];
 }
 
@@ -266,6 +273,8 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (void)requestActivation:(void (^)(BOOL success))completion
 {
+	[self initialize]; // Lazy init
+
 	if(!_txmActive)
 	{
 		NSLog(@"[StikDebugJIT] No TXM - activation not needed");
@@ -360,6 +369,8 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (void)detachDebugger
 {
+	[self initialize]; // Lazy init
+
 	if(_txmActive && [self isDebuggerAttached])
 	{
 		BreakJITDetach();
