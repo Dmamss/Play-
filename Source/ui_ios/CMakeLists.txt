@@ -200,6 +200,8 @@ set_target_properties(
 		XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT"
 		XCODE_EMBED_FRAMEWORKS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT/BreakpointJIT.framework"
 		XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY TRUE
+		BUILD_WITH_INSTALL_RPATH TRUE
+		INSTALL_RPATH "@executable_path/Frameworks"
 		)
 
 if(USE_GSH_VULKAN)
@@ -207,5 +209,7 @@ if(USE_GSH_VULKAN)
 		Play
 		PROPERTIES
 			XCODE_EMBED_FRAMEWORKS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT/BreakpointJIT.framework;$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework"
+			BUILD_WITH_INSTALL_RPATH TRUE
+			INSTALL_RPATH "@executable_path/Frameworks"
 	)
 endif()
