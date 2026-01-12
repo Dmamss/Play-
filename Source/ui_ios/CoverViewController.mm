@@ -14,6 +14,13 @@ static bool IsJitAvailable()
 {
 	//If ppid != 1, it means we're being run in the debugger
 	if(getppid() != 1) return true;
+
+	// Check StikDebug JIT service (iOS 26 with TXM)
+	if([[StikDebugJitService sharedService] isJitAvailable])
+	{
+		return true;
+	}
+
 	if([[AltServerJitService sharedAltServerJitService] jitEnabled])
 	{
 		return true;
