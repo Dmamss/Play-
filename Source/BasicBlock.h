@@ -71,7 +71,7 @@ class CBasicBlock : public std::enable_shared_from_this<CBasicBlock>
 {
 public:
 	CBasicBlock(CMIPS&, uint32 = MIPS_INVALID_PC, uint32 = MIPS_INVALID_PC, BLOCK_CATEGORY = BLOCK_CATEGORY_UNKNOWN);
-	virtual ~CBasicBlock();
+	virtual ~CBasicBlock() = default;
 	void Execute();
 	void Compile();
 	virtual void CompileRange(CMipsJitter*);
@@ -134,15 +134,5 @@ private:
 	uint32 m_linkBlockTrampolineOffset[LINK_SLOT_MAX];
 #ifdef _DEBUG
 	CBasicBlock* m_linkBlock[LINK_SLOT_MAX];
-#endif
-
-#if defined(__APPLE__)
-#include <TargetConditionals.h>
-#if TARGET_OS_IPHONE
-	// iOS 26 TXM: Dual-mapped JIT memory via PlayJIT
-	void* m_jitCodeRW;
-	void* m_jitCodeRX;
-	size_t m_jitCodeSize;
-#endif
 #endif
 };
