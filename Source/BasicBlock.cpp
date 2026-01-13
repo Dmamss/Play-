@@ -4,6 +4,13 @@
 #include "MipsJitter.h"
 #include "Jitter_CodeGenFactory.h"
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#include "ui_ios/PlayJIT.h"
+#endif
+#endif
+
 #if defined(AOT_BUILD_CACHE) || defined(AOT_USE_CACHE)
 #define AOT_ENABLED
 #endif
@@ -50,6 +57,13 @@ CBasicBlock::CBasicBlock(CMIPS& context, uint32 begin, uint32 end, BLOCK_CATEGOR
 #ifdef AOT_USE_CACHE
     , m_function(nullptr)
 #endif
+#if defined(__APPLE__)
+#if TARGET_OS_IPHONE
+    , m_jitCodeRW(nullptr)
+    , m_jitCodeRX(nullptr)
+    , m_jitCodeSize(0)
+#endif
+#endif
 {
 	assert(m_end >= m_begin);
 	for(uint32 i = 0; i < LINK_SLOT_MAX; i++)
@@ -59,6 +73,22 @@ CBasicBlock::CBasicBlock(CMIPS& context, uint32 begin, uint32 end, BLOCK_CATEGOR
 #endif
 		m_linkBlockTrampolineOffset[i] = INVALID_LINK_SLOT;
 	}
+}
+
+CBasicBlock::~CBasicBlock()
+{
+#if defined(__APPLE__)
+#if TARGET_OS_IPHONE
+	// Clean up PlayJIT-allocated memory
+	if(m_jitCodeRW != nullptr && m_jitCodeRX != nullptr)
+	{
+		PlayJIT_Free(m_jitCodeRW, m_jitCodeRX, m_jitCodeSize);
+		m_jitCodeRW = nullptr;
+		m_jitCodeRX = nullptr;
+		m_jitCodeSize = 0;
+	}
+#endif
+#endif
 }
 
 #ifdef AOT_BUILD_CACHE
@@ -98,7 +128,44 @@ void CBasicBlock::Compile()
 		jitter->End();
 	}
 
-	m_function = CMemoryFunction(stream.GetBuffer(), stream.GetSize());
+	// iOS 26 TXM: Try PlayJIT for dual-mapped memory allocation
+	bool usedPlayJIT = false;
+#if defined(__APPLE__)
+#if TARGET_OS_IPHONE
+	if(PlayJIT_HasTXM() && PlayJIT_IsAvailable())
+	{
+		void* rwPtr = nullptr;
+		void* rxPtr = nullptr;
+		size_t codeSize = stream.GetSize();
+
+		if(PlayJIT_Allocate(codeSize, &rwPtr, &rxPtr))
+		{
+			// Copy generated code to RW region
+			memcpy(rwPtr, stream.GetBuffer(), codeSize);
+
+			// Flush instruction cache
+			PlayJIT_FlushCache(rxPtr, codeSize);
+
+			// Store pointers for cleanup
+			m_jitCodeRW = rwPtr;
+			m_jitCodeRX = rxPtr;
+			m_jitCodeSize = codeSize;
+
+			usedPlayJIT = true;
+			printf("[BasicBlock] Using PlayJIT allocation: RW=%p RX=%p Size=%zu\n", rwPtr, rxPtr, codeSize);
+		}
+		else
+		{
+			printf("[BasicBlock] PlayJIT_Allocate failed, falling back to standard allocation\n");
+		}
+	}
+#endif
+#endif
+
+	if(!usedPlayJIT)
+	{
+		m_function = CMemoryFunction(stream.GetBuffer(), stream.GetSize());
+	}
 
 #ifdef VTUNE_ENABLED
 	if(iJIT_IsProfilingActive() == iJIT_SAMPLING_ON)
@@ -330,7 +397,21 @@ void CBasicBlock::CompileEpilog(CMipsJitter* jitter, bool loopsOnItself)
 
 void CBasicBlock::Execute()
 {
-	m_function(&m_context);
+#if defined(__APPLE__)
+#if TARGET_OS_IPHONE
+	if(m_jitCodeRX != nullptr)
+	{
+		// Execute PlayJIT-allocated code
+		typedef void (*FctType)(void*);
+		auto fct = reinterpret_cast<FctType>(m_jitCodeRX);
+		fct(&m_context);
+	}
+	else
+#endif
+#endif
+	{
+		m_function(&m_context);
+	}
 
 	assert(m_context.m_State.nGPR[0].nV0 == 0);
 	assert(m_context.m_State.nGPR[0].nV1 == 0);
