@@ -124,6 +124,7 @@ static NSString* const reuseIdentifier = @"coverCell";
 	[[AltServerJitService sharedAltServerJitService] startProcess];
 	[self buildCollectionWithForcedFullScan:NO];
 }
+
 - (void)viewDidAppear:(BOOL)animated
 {
 	[super viewDidAppear:animated];
@@ -136,9 +137,8 @@ static NSString* const reuseIdentifier = @"coverCell";
 		[self showJITActivationAlert];
 	}
 	// ========== FIN AJOUT JIT iOS 26 ==========
-
-	// ... reste du code existant ...
 }
+
 - (void)viewDidUnload
 {
 	assert(_bootables != nullptr);
@@ -146,12 +146,13 @@ static NSString* const reuseIdentifier = @"coverCell";
 
 	[super viewDidUnload];
 }
+
 - (void)showJITActivationAlert
 {
 	StikDebugJitService* jitService = [StikDebugJitService sharedService];
 
 	NSString* message;
-	if([jitService isStikDebugInstalled])
+	if([jitService hasTXM])
 	{
 		message = @"iOS 26 requires JIT activation for PS2 emulation.\n\n"
 		          @"Tap 'Activate JIT' to open StikDebug and enable JIT.\n"
@@ -168,12 +169,12 @@ static NSString* const reuseIdentifier = @"coverCell";
 	                                                               message:message
 	                                                        preferredStyle:UIAlertControllerStyleAlert];
 
-	if([jitService isStikDebugInstalled])
+	if([jitService hasTXM])
 	{
 		UIAlertAction* activateAction = [UIAlertAction actionWithTitle:@"Activate JIT"
 		                                                         style:UIAlertActionStyleDefault
 		                                                       handler:^(UIAlertAction* action) {
-			                                                     [jitService requestActivationWithCompletion:^(BOOL success, NSError* error) {
+			                                                     [jitService requestActivation:^(BOOL success) {
 				                                                   dispatch_async(dispatch_get_main_queue(), ^{
 					                                                 if(success)
 					                                                 {
@@ -192,7 +193,7 @@ static NSString* const reuseIdentifier = @"coverCell";
 						                                                 // Show error
 						                                                 UIAlertController* errorAlert = [UIAlertController
 						                                                     alertControllerWithTitle:@"JIT Activation Failed"
-						                                                                      message:error.localizedDescription
+						                                                                      message:@"Could not activate JIT via StikDebug."
 						                                                               preferredStyle:UIAlertControllerStyleAlert];
 						                                                 [errorAlert addAction:[UIAlertAction actionWithTitle:@"Retry"
 						                                                                                                style:UIAlertActionStyleDefault
@@ -217,6 +218,7 @@ static NSString* const reuseIdentifier = @"coverCell";
 
 	[self presentViewController:alert animated:YES completion:nil];
 }
+
 - (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
 {
 	// resize your layers based on the view’s new bounds
@@ -298,7 +300,7 @@ static NSString* const reuseIdentifier = @"coverCell";
 			    actionWithTitle:@"Help"
 			              style:UIAlertActionStyleDefault
 			            handler:^(UIAlertAction*) {
-				          [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://github.com/jpd002/Play-#running-on-ios"]];
+				          [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://github.com/jpd002/Play-#running-on-ios"] options:@{} completionHandler:nil];
 			            }];
 			[alert addAction:helpAction];
 		}
