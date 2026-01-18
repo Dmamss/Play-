@@ -1,5 +1,5 @@
 #import "JITInitializer.h"
-#include "../CodeGen/include/MemoryUtil.h"
+#include "../../deps/CodeGen/include/MemoryUtil.h"
 #import <Foundation/Foundation.h>
 #import <sys/stat.h>
 
