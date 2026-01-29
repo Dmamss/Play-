@@ -28,6 +28,7 @@ public:
 	void operator()(void*);
 
 	void* GetCode() const;
+	void* GetCodeRW() const;
 	size_t GetSize() const;
 
 	void BeginModify();

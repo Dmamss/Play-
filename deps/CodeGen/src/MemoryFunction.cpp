@@ -386,6 +386,17 @@ void* CMemoryFunction::GetCode() const
 	return m_code;
 }
 
+void* CMemoryFunction::GetCodeRW() const
+{
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+	if(m_dualMapped && m_codeRW)
+	{
+		return m_codeRW;
+	}
+#endif
+	return m_code;
+}
+
 size_t CMemoryFunction::GetSize() const
 {
 	return m_size;

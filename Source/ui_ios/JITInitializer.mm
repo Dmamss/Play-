@@ -64,49 +64,66 @@
 
 + (void)initializeJITSystem
 {
-	NSLog(@"[JITInitializer] Initializing CodeGen JIT system...");
+	NSLog(@"[JITInitializer] Detecting JIT mode...");
 
-	// Detect iOS version and TXM status
-	BOOL hasTXM = NO;
 	CodeGen::JitType jitType;
 
 	if(@available(iOS 26, *))
 	{
-		// iOS 26+
-		hasTXM = [self deviceHasTXM];
+		BOOL hasTXM = [self deviceHasTXM];
 
 		if(hasTXM)
 		{
-			// iOS 26+ with TXM: LuckTXM mode (most performant)
 			NSLog(@"[JITInitializer] Configuring JIT: LuckTXM mode (iOS 26+ with TXM)");
 			jitType = CodeGen::JitType::LuckTXM;
 		}
 		else
 		{
-			// iOS 26+ without TXM: LuckNoTXM mode
 			NSLog(@"[JITInitializer] Configuring JIT: LuckNoTXM mode (iOS 26+ without TXM)");
 			jitType = CodeGen::JitType::LuckNoTXM;
 		}
 	}
 	else
 	{
-		// iOS < 26: Legacy mode
 		NSLog(@"[JITInitializer] Configuring JIT: Legacy mode (iOS < 26)");
 		jitType = CodeGen::JitType::Legacy;
 	}
 
-	// Configure CodeGen with detected mode
+	// Only set the mode — do NOT allocate memory yet.
+	// For LuckTXM, the debugger must be attached first (via StikDebug).
+	// Call allocateExecutableMemoryIfNeeded after activation.
 	CodeGen::SetJitType(jitType);
 
-	// Pre-allocate executable memory region if using LuckTXM
-	if(jitType == CodeGen::JitType::LuckTXM)
+	NSLog(@"[JITInitializer] JIT mode configured (allocation deferred)");
+}
+
++ (void)allocateExecutableMemoryIfNeeded
+{
+	if(CodeGen::GetJitType() != CodeGen::JitType::LuckTXM)
 	{
-		NSLog(@"[JITInitializer] Pre-allocating 512MB executable memory region...");
-		CodeGen::AllocateExecutableMemoryRegion();
-		NSLog(@"[JITInitializer] Memory region allocated successfully");
+		return;
 	}
 
-	NSLog(@"[JITInitializer] CodeGen JIT system initialized successfully");
+	if(CodeGen::IsExecutableMemoryRegionAllocated())
+	{
+		NSLog(@"[JITInitializer] Executable memory region already allocated");
+		return;
+	}
+
+	NSLog(@"[JITInitializer] Allocating 512MB executable memory region via BreakpointJIT...");
+	CodeGen::AllocateExecutableMemoryRegion();
+
+	if(CodeGen::IsExecutableMemoryRegionAllocated())
+	{
+		NSLog(@"[JITInitializer] Region allocated: RW=%p RX=%p size=%zu",
+		      CodeGen::GetExecutableMemoryRWBase(),
+		      CodeGen::GetExecutableMemoryRXBase(),
+		      CodeGen::GetExecutableMemoryRegionSize());
+	}
+	else
+	{
+		NSLog(@"[JITInitializer] ERROR: Failed to allocate executable memory region");
+	}
 }
 
 @end
