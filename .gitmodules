@@ -10,6 +10,3 @@
 [submodule "deps/libchdr"]
 	path = deps/libchdr
 	url = https://github.com/jpd002/libchdr.git
-[submodule "deps/BreakpointJIT"]
-	path = deps/BreakpointJIT
-	url = https://github.com/Dmamss/Play-/tree/master/deps/BreakpointJIT
