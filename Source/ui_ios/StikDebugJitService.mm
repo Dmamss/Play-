@@ -398,8 +398,8 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		  if(!success)
 		  {
 			  error = [NSError errorWithDomain:@"com.virtualapplications.play.jit"
-			                              code:-1
-			                          userInfo:@{NSLocalizedDescriptionKey : @"Failed to activate JIT. Make sure StikDebug is installed and try again."}];
+				                          code:-1
+				                      userInfo:@{NSLocalizedDescriptionKey : @"Failed to activate JIT. Make sure StikDebug is installed and try again."}];
 		  }
 		  completion(success, error);
 	  }
