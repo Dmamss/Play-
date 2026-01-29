@@ -95,6 +95,8 @@ set(OSX_SOURCES
 	StikDebugJitService.mm
 	AppDelegate.mm
 	JITInitializer.mm
+	PlayJIT.mm
+	CodeGen/MemoryUtil_iOS.mm
 	BackgroundLayer.m
 	CoverViewCell.m
 	CoverViewController.mm
@@ -117,6 +119,8 @@ set(OSX_HEADERS
 	AltServerJitService.h
 	StikDebugJitService.h
 	JITInitializer.h
+	PlayJIT.h
+	CodeGen/MemoryUtil_iOS.h
 	Bridging-Header.h
 	AppDelegate.h
 	BackgroundLayer.h
@@ -171,11 +175,16 @@ target_link_libraries(Play ${QUARTZCORE_LIBRARY})
 target_link_libraries(Play ${IMAGEIO_LIBRARY})
 target_link_libraries(Play ${UI_IOS_PROJECT_LIBS} "-ObjC -lsqlite3 -framework OpenAL")
 target_include_directories(Play PRIVATE
-    "${CMAKE_SOURCE_DIR}/Source/ui_ios/BreakpointJIT/BreakpointJIT.framework/Headers"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT/BreakpointJIT.framework/Headers"
 )
 
-# BreakpointJIT framework search path
-target_link_options(Play PRIVATE "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT")
+# BreakpointJIT framework search path and linking
+target_link_options(Play PRIVATE
+    "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT"
+    "-F${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT"
+    "-framework" "BreakpointJIT"
+)
 target_compile_definitions(Play PRIVATE ${UI_IOS_DEFINITIONS_LIST})
 
 # Set a custom plist file for the app bundle

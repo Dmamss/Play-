@@ -13,11 +13,12 @@
 
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions
 {
-	[[StikDebugJitService sharedService] initialize];
+	// StikDebugJitService initializes automatically via its singleton init
+	StikDebugJitService* jitService = [StikDebugJitService sharedService];
 
-	if([[StikDebugJitService sharedService] isJitActive])
+	if([jitService isJitActive])
 	{
-		[[StikDebugJitService sharedService] setEnvironmentForJIT];
+		[jitService setEnvironmentForJIT];
 	}
 
 	// Initialize CodeGen JIT system with appropriate mode based on iOS version and TXM status

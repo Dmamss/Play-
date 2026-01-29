@@ -19,15 +19,33 @@
 /// Check if iOS 26 TXM is active (requires StikDebug)
 - (BOOL)hasTXM;
 
-/// Check if JIT is currently available
+/// Check if JIT is currently available (no TXM, or debugger attached)
 - (BOOL)isJitAvailable;
+
+/// Check if JIT is currently active (alias for isJitAvailable)
+- (BOOL)isJitActive;
 
 /// Check if StikDebug activation is needed
 - (BOOL)needsActivation;
 
+/// Check if StikDebug app is installed on the device
+- (BOOL)isStikDebugInstalled;
+
+/// Set environment variables needed for JIT operation
+- (void)setEnvironmentForJIT;
+
+/// Handle callback URL from StikDebug app
+/// @param url The callback URL to handle
+/// @return YES if the URL was handled
+- (BOOL)handleCallbackURL:(NSURL*)url;
+
 /// Request JIT activation via StikDebug app
 /// @param completion Called with success status
 - (void)requestActivation:(void (^)(BOOL success))completion;
+
+/// Request JIT activation via StikDebug app (with error reporting)
+/// @param completion Called with success status and optional error
+- (void)requestActivationWithCompletion:(void (^)(BOOL success, NSError* error))completion;
 
 /// Detach StikDebug debugger (call after all JIT allocations)
 - (void)detachDebugger;

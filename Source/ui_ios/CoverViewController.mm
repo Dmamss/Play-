@@ -18,6 +18,11 @@ static bool IsJitAvailable()
 	{
 		return true;
 	}
+	// Check StikDebug JIT (iOS 26+)
+	if([[StikDebugJitService sharedService] isJitActive])
+	{
+		return true;
+	}
 	{
 		//Check if we can scan the mobile directory (only possible if jailbroken)
 		std::error_code errorCode;
@@ -128,16 +133,11 @@ static NSString* const reuseIdentifier = @"coverCell";
 {
 	[super viewDidAppear:animated];
 
-	// ========== AJOUT JIT iOS 26 ==========
 	StikDebugJitService* jitService = [StikDebugJitService sharedService];
-
 	if([jitService needsActivation])
 	{
 		[self showJITActivationAlert];
 	}
-	// ========== FIN AJOUT JIT iOS 26 ==========
-
-	// ... reste du code existant ...
 }
 - (void)viewDidUnload
 {

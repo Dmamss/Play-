@@ -6,10 +6,11 @@
 //
 
 #import "StikDebugJitService.h"
-#import <BreakpointJIT/BreakpointJIT.h>
+#import <BreakpointJIT/BreakJIT.h>
 #include "AppConfig.h"
 #import "PreferenceDefs.h"
 #include <sys/sysctl.h>
+#include <sys/mman.h>
 #include <signal.h>
 
 // CS_DEBUGGED flag
@@ -206,9 +207,58 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 	return [self isJitAvailable];
 }
 
+- (BOOL)isJitActive
+{
+	return [self isJitAvailable];
+}
+
 - (BOOL)needsActivation
 {
 	return _txmActive && ![self isDebuggerAttached];
+}
+
+- (BOOL)isStikDebugInstalled
+{
+	NSURL* stikDebugURL = [NSURL URLWithString:@"stikdebug://"];
+	return [[UIApplication sharedApplication] canOpenURL:stikDebugURL];
+}
+
+- (void)setEnvironmentForJIT
+{
+	if(_txmActive)
+	{
+		setenv("PLAY_HAS_TXM", "1", 1);
+		NSLog(@"[StikDebugJIT] Set PLAY_HAS_TXM=1");
+	}
+	if([self isDebuggerAttached])
+	{
+		setenv("PLAY_JIT_ACTIVE", "1", 1);
+		NSLog(@"[StikDebugJIT] Set PLAY_JIT_ACTIVE=1");
+	}
+}
+
+- (BOOL)handleCallbackURL:(NSURL*)url
+{
+	NSString* scheme = [url scheme];
+	if(![scheme isEqualToString:@"play"] && ![scheme isEqualToString:@"com.virtualapplications.play"])
+	{
+		return NO;
+	}
+
+	NSString* host = [url host];
+	if([host isEqualToString:@"jit-enabled"] || [host isEqualToString:@"jit-callback"])
+	{
+		NSLog(@"[StikDebugJIT] JIT callback received from StikDebug");
+		if([self isDebuggerAttached])
+		{
+			setenv("PLAY_HAS_TXM", "1", 1);
+			setenv("PLAY_JIT_ACTIVE", "1", 1);
+			NSLog(@"[StikDebugJIT] JIT confirmed active via callback");
+		}
+		return YES;
+	}
+
+	return NO;
 }
 
 #pragma mark - Activation
@@ -337,6 +387,23 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 			});
 		  }];
 	});
+}
+
+- (void)requestActivationWithCompletion:(void (^)(BOOL success, NSError* error))completion
+{
+	[self requestActivation:^(BOOL success) {
+	  if(completion)
+	  {
+		  NSError* error = nil;
+		  if(!success)
+		  {
+			  error = [NSError errorWithDomain:@"com.virtualapplications.play.jit"
+			                              code:-1
+			                          userInfo:@{NSLocalizedDescriptionKey : @"Failed to activate JIT. Make sure StikDebug is installed and try again."}];
+		  }
+		  completion(success, error);
+	  }
+	}];
 }
 
 - (BOOL)waitForDebugger:(uint32_t)timeout_ms
