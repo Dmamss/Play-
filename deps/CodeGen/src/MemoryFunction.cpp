@@ -85,6 +85,7 @@ EM_JS(emscripten::EM_VAL, WasmCreateModule, (uintptr_t code, uintptr_t size),
 #include "MemoryFunction_iOS.h"
 #include <mutex>
 #include <atomic>
+#include <tuple>
 
 // ─── CMemoryFunctioniOS namespace implementation ───
 namespace
@@ -184,6 +185,22 @@ CMemoryFunction::CMemoryFunction()
 , m_size(0)
 {
 
+}
+
+CMemoryFunction::CMemoryFunction(CMemoryFunction&& rhs)
+: m_code(nullptr)
+, m_size(0)
+{
+	std::swap(m_code, rhs.m_code);
+	std::swap(m_size, rhs.m_size);
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+	std::swap(m_codeRW, rhs.m_codeRW);
+	std::swap(m_dualMapped, rhs.m_dualMapped);
+	std::swap(m_fromTxmRegion, rhs.m_fromTxmRegion);
+#endif
+#if defined(MEMFUNC_USE_WASM)
+	std::swap(m_wasmModule, rhs.m_wasmModule);
+#endif
 }
 
 CMemoryFunction::CMemoryFunction(const void* code, size_t size)

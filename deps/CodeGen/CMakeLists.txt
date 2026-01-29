@@ -109,6 +109,7 @@ add_library(CodeGen
 	include/MachoDefs.h
 	include/MachoObjectFile.h
 	include/MemoryFunction.h
+	include/MemoryFunction_iOS.h
 	include/ObjectFile.h
 	include/WasmDefs.h
 	include/WasmModuleBuilder.h

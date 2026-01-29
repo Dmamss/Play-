@@ -180,7 +180,11 @@ target_include_directories(Play PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../deps/CodeGen/include"
 )
 
-# BreakpointJIT framework search path and linking
+# BreakpointJIT framework search path for compile + link
+target_compile_options(Play PRIVATE
+    "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT"
+    "-F${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT"
+)
 target_link_options(Play PRIVATE
     "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT"
     "-F${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT"
@@ -205,7 +209,7 @@ set_target_properties(
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
 		XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
 		RESOURCE "${OSX_RES}"
-		XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT"
+		XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT ${CMAKE_SOURCE_DIR}/Source/ui_ios/BreakpointJIT"
 		)
 
 if(USE_GSH_VULKAN)
