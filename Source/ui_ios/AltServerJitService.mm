@@ -1,7 +1,13 @@
 #import "AltServerJitService.h"
-#import "AltKit-Swift.h"
 #include "AppConfig.h"
 #import "PreferenceDefs.h"
+
+#if __has_include("AltKit-Swift.h")
+#import "AltKit-Swift.h"
+#define HAS_ALTKIT 1
+#else
+#define HAS_ALTKIT 0
+#endif
 
 @implementation AltServerJitService
 
@@ -45,6 +51,7 @@
 
 	self.processStarted = YES;
 
+#if HAS_ALTKIT
 	[[ALTServerManager sharedManager] startDiscovering];
 
 	[[ALTServerManager sharedManager] autoconnectWithCompletionHandler:^(ALTServerConnection* connection, NSError* error) {
@@ -68,6 +75,9 @@
 		[connection disconnect];
 	  }];
 	}];
+#else
+	NSLog(@"AltKit not available - AltServer JIT path disabled");
+#endif
 }
 
 @end
