@@ -49,126 +49,126 @@ static CMemoryFunctioniOS::JitMode MapJitType(CodeGen::JitType type)
 namespace CodeGen
 {
 
-void SetJitType(JitType type)
-{
-	NSLog(@"[MemoryUtil_iOS] JIT type set to: %s",
-	      type == JitType::Legacy ? "Legacy" : type == JitType::LuckNoTXM ? "LuckNoTXM"
-	                                                                      : "LuckTXM");
-
-	// Forward to CodeGen's MemoryFunction runtime mode
-	CMemoryFunctioniOS::SetJitMode(MapJitType(type));
-}
-
-JitType GetJitType()
-{
-	auto mode = CMemoryFunctioniOS::GetJitMode();
-	switch(mode)
+	void SetJitType(JitType type)
 	{
-	case CMemoryFunctioniOS::JitMode::LuckNoTXM:
-		return JitType::LuckNoTXM;
-	case CMemoryFunctioniOS::JitMode::LuckTXM:
-		return JitType::LuckTXM;
-	case CMemoryFunctioniOS::JitMode::Legacy:
-	default:
-		return JitType::Legacy;
-	}
-}
+		NSLog(@"[MemoryUtil_iOS] JIT type set to: %s",
+		      type == JitType::Legacy ? "Legacy" : type == JitType::LuckNoTXM ? "LuckNoTXM"
+		                                                                      : "LuckTXM");
 
-void AllocateExecutableMemoryRegion()
-{
-	if(s_regionAllocated)
-	{
-		NSLog(@"[MemoryUtil_iOS] Executable memory region already allocated");
-		return;
+		// Forward to CodeGen's MemoryFunction runtime mode
+		CMemoryFunctioniOS::SetJitMode(MapJitType(type));
 	}
 
-	if(CMemoryFunctioniOS::GetJitMode() != CMemoryFunctioniOS::JitMode::LuckTXM)
+	JitType GetJitType()
 	{
-		NSLog(@"[MemoryUtil_iOS] AllocateExecutableMemoryRegion only applicable for LuckTXM mode");
-		return;
+		auto mode = CMemoryFunctioniOS::GetJitMode();
+		switch(mode)
+		{
+		case CMemoryFunctioniOS::JitMode::LuckNoTXM:
+			return JitType::LuckNoTXM;
+		case CMemoryFunctioniOS::JitMode::LuckTXM:
+			return JitType::LuckTXM;
+		case CMemoryFunctioniOS::JitMode::Legacy:
+		default:
+			return JitType::Legacy;
+		}
 	}
 
-	size_t pageSize = getpagesize();
-	size_t alignedSize = (kDefaultRegionSize + pageSize - 1) & ~(pageSize - 1);
+	void AllocateExecutableMemoryRegion()
+	{
+		if(s_regionAllocated)
+		{
+			NSLog(@"[MemoryUtil_iOS] Executable memory region already allocated");
+			return;
+		}
 
-	NSLog(@"[MemoryUtil_iOS] Allocating %zu byte executable memory region via BreakpointJIT...", alignedSize);
+		if(CMemoryFunctioniOS::GetJitMode() != CMemoryFunctioniOS::JitMode::LuckTXM)
+		{
+			NSLog(@"[MemoryUtil_iOS] AllocateExecutableMemoryRegion only applicable for LuckTXM mode");
+			return;
+		}
+
+		size_t pageSize = getpagesize();
+		size_t alignedSize = (kDefaultRegionSize + pageSize - 1) & ~(pageSize - 1);
+
+		NSLog(@"[MemoryUtil_iOS] Allocating %zu byte executable memory region via BreakpointJIT...", alignedSize);
 
 #if HAS_BREAKPOINTJIT
-	// Use BreakpointJIT to allocate RX memory from StikDebug
-	void* rxBase = BreakGetJITMapping(NULL, alignedSize);
-	if(!rxBase)
-	{
-		NSLog(@"[MemoryUtil_iOS] BreakGetJITMapping failed for region allocation");
-		return;
-	}
+		// Use BreakpointJIT to allocate RX memory from StikDebug
+		void* rxBase = BreakGetJITMapping(NULL, alignedSize);
+		if(!rxBase)
+		{
+			NSLog(@"[MemoryUtil_iOS] BreakGetJITMapping failed for region allocation");
+			return;
+		}
 
-	// Create RW alias via vm_remap
-	vm_address_t rwBase = 0;
-	vm_prot_t curProt, maxProt;
+		// Create RW alias via vm_remap
+		vm_address_t rwBase = 0;
+		vm_prot_t curProt, maxProt;
 
-	kern_return_t kr = vm_remap(
-	    mach_task_self(),
-	    &rwBase,
-	    alignedSize,
-	    0,
-	    VM_FLAGS_ANYWHERE,
-	    mach_task_self(),
-	    (vm_address_t)rxBase,
-	    FALSE,
-	    &curProt,
-	    &maxProt,
-	    VM_INHERIT_NONE);
+		kern_return_t kr = vm_remap(
+		    mach_task_self(),
+		    &rwBase,
+		    alignedSize,
+		    0,
+		    VM_FLAGS_ANYWHERE,
+		    mach_task_self(),
+		    (vm_address_t)rxBase,
+		    FALSE,
+		    &curProt,
+		    &maxProt,
+		    VM_INHERIT_NONE);
 
-	if(kr != KERN_SUCCESS)
-	{
-		NSLog(@"[MemoryUtil_iOS] vm_remap failed for RW alias: %d", kr);
-		return;
-	}
+		if(kr != KERN_SUCCESS)
+		{
+			NSLog(@"[MemoryUtil_iOS] vm_remap failed for RW alias: %d", kr);
+			return;
+		}
 
-	// Set RW protection on the alias
-	kr = vm_protect(mach_task_self(), rwBase, alignedSize, FALSE,
-	                VM_PROT_READ | VM_PROT_WRITE);
+		// Set RW protection on the alias
+		kr = vm_protect(mach_task_self(), rwBase, alignedSize, FALSE,
+		                VM_PROT_READ | VM_PROT_WRITE);
 
-	if(kr != KERN_SUCCESS)
-	{
-		NSLog(@"[MemoryUtil_iOS] vm_protect failed for RW alias: %d", kr);
-		vm_deallocate(mach_task_self(), rwBase, alignedSize);
-		return;
-	}
+		if(kr != KERN_SUCCESS)
+		{
+			NSLog(@"[MemoryUtil_iOS] vm_protect failed for RW alias: %d", kr);
+			vm_deallocate(mach_task_self(), rwBase, alignedSize);
+			return;
+		}
 
-	s_rxBase = rxBase;
-	s_rwBase = (void*)rwBase;
-	s_regionSize = alignedSize;
-	s_regionAllocated = true;
+		s_rxBase = rxBase;
+		s_rwBase = (void*)rwBase;
+		s_regionSize = alignedSize;
+		s_regionAllocated = true;
 
-	// Register with CodeGen's MemoryFunction so sub-allocations use this region
-	CMemoryFunctioniOS::SetLuckTXMRegion(s_rwBase, s_rxBase, s_regionSize);
+		// Register with CodeGen's MemoryFunction so sub-allocations use this region
+		CMemoryFunctioniOS::SetLuckTXMRegion(s_rwBase, s_rxBase, s_regionSize);
 
-	NSLog(@"[MemoryUtil_iOS] Executable memory region allocated: RW=%p RX=%p size=%zu",
-	      s_rwBase, s_rxBase, s_regionSize);
+		NSLog(@"[MemoryUtil_iOS] Executable memory region allocated: RW=%p RX=%p size=%zu",
+		      s_rwBase, s_rxBase, s_regionSize);
 #else
-	NSLog(@"[MemoryUtil_iOS] BreakpointJIT not available - cannot allocate LuckTXM region");
+		NSLog(@"[MemoryUtil_iOS] BreakpointJIT not available - cannot allocate LuckTXM region");
 #endif
-}
+	}
 
-bool IsExecutableMemoryRegionAllocated()
-{
-	return s_regionAllocated;
-}
+	bool IsExecutableMemoryRegionAllocated()
+	{
+		return s_regionAllocated;
+	}
 
-void* GetExecutableMemoryRWBase()
-{
-	return s_rwBase;
-}
+	void* GetExecutableMemoryRWBase()
+	{
+		return s_rwBase;
+	}
 
-void* GetExecutableMemoryRXBase()
-{
-	return s_rxBase;
-}
+	void* GetExecutableMemoryRXBase()
+	{
+		return s_rxBase;
+	}
 
-size_t GetExecutableMemoryRegionSize()
-{
-	return s_regionSize;
-}
+	size_t GetExecutableMemoryRegionSize()
+	{
+		return s_regionSize;
+	}
 
 } // namespace CodeGen
