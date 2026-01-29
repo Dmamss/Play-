@@ -177,6 +177,7 @@ target_link_libraries(Play ${UI_IOS_PROJECT_LIBS} "-ObjC -lsqlite3 -framework Op
 target_include_directories(Play PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT/BreakpointJIT.framework/Headers"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../deps/CodeGen/include"
 )
 
 # BreakpointJIT framework search path and linking

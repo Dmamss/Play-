@@ -1,0 +1,25 @@
+#pragma once
+
+#include "Test.h"
+
+class CLoopTest : public CTest
+{
+public:
+	void Run() override;
+	void Compile(Jitter::CJitter&) override;
+
+private:
+	struct CONTEXT
+	{
+		uint32 counter = 0;
+		uint32 total = 0;
+		uint32 exit = 0;
+		uint32 done = 0;
+		uint32 prevFinal = 0;
+		uint32 notDone = 0;
+		uint32 canLoop = 1;
+	};
+
+	CONTEXT m_context;
+	FunctionType m_function;
+};
