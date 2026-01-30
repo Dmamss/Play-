@@ -117,7 +117,9 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		return NO;
 	}
 
-	// Check chip (A15+ / M2+ have TXM)
+	// Check chip (A15+ / M2+ have TXM).
+	// No mmap probe — on iOS 26 it fails on ALL devices before
+	// CS_DEBUGGED is set, giving false positives for non-TXM devices.
 	uint32_t cpufamily = 0;
 	size_t size = sizeof(cpufamily);
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &size, NULL, 0) == 0)
@@ -138,14 +140,6 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		}
 	}
 
-	// Fallback: Try mmap to detect if TXM blocks it
-	void* test = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
-	                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
-	if(test == MAP_FAILED)
-	{
-		return YES; // TXM is blocking
-	}
-	munmap(test, 4096);
 	return NO;
 }
 

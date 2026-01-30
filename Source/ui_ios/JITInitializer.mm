@@ -8,7 +8,10 @@
 
 + (BOOL)deviceHasTXM
 {
-	// --- 1. Primary: check hw.cpufamily against known TXM chips (A15+/M2+) ---
+	// Check hw.cpufamily against known TXM chips (A15+/M2+).
+	// The mmap probe (RWX|MAP_JIT) is NOT used because on iOS 26
+	// it fails on ALL devices before CS_DEBUGGED is set, making it
+	// impossible to distinguish TXM rejection from CSM rejection.
 	uint32_t cpufamily = 0;
 	size_t size = sizeof(cpufamily);
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &size, NULL, 0) == 0)
@@ -26,22 +29,15 @@
 			NSLog(@"[JITInitializer] TXM detected via cpufamily 0x%08X", cpufamily);
 			return YES;
 		default:
-			NSLog(@"[JITInitializer] cpufamily 0x%08X not in TXM list", cpufamily);
+			NSLog(@"[JITInitializer] cpufamily 0x%08X — no TXM", cpufamily);
 			break;
 		}
 	}
-
-	// --- 2. Fallback: mmap probe — TXM devices reject RWX+MAP_JIT ---
-	void* test = mmap(NULL, 16384, PROT_READ | PROT_WRITE | PROT_EXEC,
-	                  MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
-	if(test == MAP_FAILED)
+	else
 	{
-		NSLog(@"[JITInitializer] TXM detected via mmap probe (RWX rejected)");
-		return YES;
+		NSLog(@"[JITInitializer] WARNING: hw.cpufamily sysctl failed");
 	}
-	munmap(test, 16384);
 
-	NSLog(@"[JITInitializer] No TXM detected");
 	return NO;
 }
 
