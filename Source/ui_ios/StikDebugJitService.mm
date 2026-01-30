@@ -195,11 +195,13 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (BOOL)isJitAvailable
 {
-	if(!_txmActive)
+	if(_iosVersion >= 26.0f)
 	{
-		return YES; // No TXM = JIT always available
+		// iOS 26+: Both LuckTXM and LuckNoTXM require CS_DEBUGGED
+		// (vm_protect EXECUTE needs debugger even without TXM)
+		return [self isDebuggerAttached];
 	}
-	return [self isDebuggerAttached];
+	return YES; // Legacy path
 }
 
 - (BOOL)jitEnabled
@@ -214,7 +216,12 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (BOOL)needsActivation
 {
-	return _txmActive && ![self isDebuggerAttached];
+	if(_iosVersion >= 26.0f)
+	{
+		// iOS 26+: Both TXM and non-TXM devices need debugger for JIT
+		return ![self isDebuggerAttached];
+	}
+	return NO;
 }
 
 - (BOOL)isStikDebugInstalled
@@ -314,9 +321,9 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (void)requestActivation:(void (^)(BOOL success))completion
 {
-	if(!_txmActive)
+	if(_iosVersion < 26.0f)
 	{
-		NSLog(@"[StikDebugJIT] No TXM - activation not needed");
+		NSLog(@"[StikDebugJIT] Legacy iOS - StikDebug activation not needed");
 		if(completion) completion(YES);
 		return;
 	}
