@@ -94,6 +94,9 @@ CPS2VM::CPS2VM()
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_PS2_LIMIT_FRAMERATE, true);
 	ReloadFrameRateLimit();
 
+	CAppConfig::GetInstance().RegisterPreferenceInteger("ps2.frameskip", 0);
+	ReloadFrameSkip();
+
 	CAppConfig::GetInstance().RegisterPreferenceInteger(PREF_AUDIO_SPUBLOCKCOUNT, 100);
 	ReloadSpuBlockCountImpl();
 
@@ -250,6 +253,14 @@ void CPS2VM::ReloadFrameRateLimit()
 
 	m_spuUpdateTicksTotal = (static_cast<int64>(eeFreqScaled) << SPU_UPDATE_TICKS_PRECISION) / (static_cast<int64>(DST_SAMPLE_RATE));
 	m_spuUpdateTicksTotal *= static_cast<int64>(SAMPLES_PER_UPDATE);
+}
+
+void CPS2VM::ReloadFrameSkip()
+{
+	m_frameskip = CAppConfig::GetInstance().GetPreferenceInteger("ps2.frameskip");
+	if(m_frameskip < 0) m_frameskip = 0;
+	if(m_frameskip > 5) m_frameskip = 5;
+	m_frameskipCounter = 0;
 }
 
 CVirtualMachine::STATUS CPS2VM::GetStatus() const
@@ -942,10 +953,19 @@ void CPS2VM::EmuThread()
 
 						if(m_ee->m_gs != NULL)
 						{
+							bool skipFrame = (m_frameskip > 0) && (m_frameskipCounter > 0);
+							if(!skipFrame)
+							{
 #ifdef PROFILE
-							CProfilerZone profilerZone(m_gsSyncProfilerZone);
+								CProfilerZone profilerZone(m_gsSyncProfilerZone);
 #endif
-							m_ee->m_gs->SetVBlank();
+								m_ee->m_gs->SetVBlank();
+							}
+							m_frameskipCounter++;
+							if(m_frameskipCounter > m_frameskip)
+							{
+								m_frameskipCounter = 0;
+							}
 						}
 
 						if(m_pad != NULL)
