@@ -117,12 +117,10 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		return NO;
 	}
 
-	// Check chip (A15+ / M2+ have TXM).
-	// No mmap probe — on iOS 26 it fails on ALL devices before
-	// CS_DEBUGGED is set, giving false positives for non-TXM devices.
+	// --- 1. Check hw.cpufamily against known TXM chips ---
 	uint32_t cpufamily = 0;
-	size_t size = sizeof(cpufamily);
-	if(sysctlbyname("hw.cpufamily", &cpufamily, &size, NULL, 0) == 0)
+	size_t cpusize = sizeof(cpufamily);
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &cpusize, NULL, 0) == 0)
 	{
 		switch(cpufamily)
 		{
@@ -138,6 +136,18 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		default:
 			break;
 		}
+	}
+
+	// --- 2. Fallback: detect TXM via hw.machine model identifier ---
+	char machine[64] = {0};
+	size_t machsize = sizeof(machine);
+	if(sysctlbyname("hw.machine", machine, &machsize, NULL, 0) == 0)
+	{
+		int major = 0;
+		if(sscanf(machine, "iPhone%d", &major) == 1 && major >= 14)
+			return YES;
+		if(sscanf(machine, "iPad%d", &major) == 1 && major >= 13)
+			return YES;
 	}
 
 	return NO;

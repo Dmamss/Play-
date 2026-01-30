@@ -8,13 +8,10 @@
 
 + (BOOL)deviceHasTXM
 {
-	// Check hw.cpufamily against known TXM chips (A15+/M2+).
-	// The mmap probe (RWX|MAP_JIT) is NOT used because on iOS 26
-	// it fails on ALL devices before CS_DEBUGGED is set, making it
-	// impossible to distinguish TXM rejection from CSM rejection.
+	// --- 1. Primary: check hw.cpufamily against known TXM chips ---
 	uint32_t cpufamily = 0;
-	size_t size = sizeof(cpufamily);
-	if(sysctlbyname("hw.cpufamily", &cpufamily, &size, NULL, 0) == 0)
+	size_t cpusize = sizeof(cpufamily);
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &cpusize, NULL, 0) == 0)
 	{
 		switch(cpufamily)
 		{
@@ -29,15 +26,44 @@
 			NSLog(@"[JITInitializer] TXM detected via cpufamily 0x%08X", cpufamily);
 			return YES;
 		default:
-			NSLog(@"[JITInitializer] cpufamily 0x%08X — no TXM", cpufamily);
+			NSLog(@"[JITInitializer] cpufamily 0x%08X not in known TXM list, trying model fallback", cpufamily);
 			break;
 		}
 	}
-	else
+
+	// --- 2. Fallback: detect TXM via hw.machine model identifier ---
+	// TXM is present on A15+ chips. Device model numbers that have TXM:
+	//   iPhone14,x and later (A15+)
+	//   iPad13,x and later (M1/A15+)
+	// Parse the major model number to detect TXM generically.
+	char machine[64] = {0};
+	size_t machsize = sizeof(machine);
+	if(sysctlbyname("hw.machine", machine, &machsize, NULL, 0) == 0)
 	{
-		NSLog(@"[JITInitializer] WARNING: hw.cpufamily sysctl failed");
+		NSLog(@"[JITInitializer] hw.machine = %s", machine);
+
+		int major = 0;
+		if(sscanf(machine, "iPhone%d", &major) == 1)
+		{
+			// iPhone14,x = A15 (first TXM iPhone)
+			if(major >= 14)
+			{
+				NSLog(@"[JITInitializer] TXM detected via model: iPhone major=%d (>=14)", major);
+				return YES;
+			}
+		}
+		else if(sscanf(machine, "iPad%d", &major) == 1)
+		{
+			// iPad13,x = M1/A15 (first TXM iPads)
+			if(major >= 13)
+			{
+				NSLog(@"[JITInitializer] TXM detected via model: iPad major=%d (>=13)", major);
+				return YES;
+			}
+		}
 	}
 
+	NSLog(@"[JITInitializer] No TXM detected (cpufamily=0x%08X, machine=%s)", cpufamily, machine);
 	return NO;
 }
 
