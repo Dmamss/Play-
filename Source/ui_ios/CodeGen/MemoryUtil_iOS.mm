@@ -117,7 +117,7 @@ namespace CodeGen
 		    FALSE,
 		    &curProt,
 		    &maxProt,
-		    VM_INHERIT_NONE);
+		    VM_INHERIT_DEFAULT);
 
 		if(kr != KERN_SUCCESS)
 		{
@@ -125,13 +125,10 @@ namespace CodeGen
 			return;
 		}
 
-		// Set RW protection on the alias
-		kr = vm_protect(mach_task_self(), rwBase, alignedSize, FALSE,
-		                VM_PROT_READ | VM_PROT_WRITE);
-
-		if(kr != KERN_SUCCESS)
+		// Set RW protection on the alias (mprotect, matching Dolphin)
+		if(mprotect((void*)rwBase, alignedSize, PROT_READ | PROT_WRITE) != 0)
 		{
-			NSLog(@"[MemoryUtil_iOS] vm_protect failed for RW alias: %d", kr);
+			NSLog(@"[MemoryUtil_iOS] mprotect failed for RW alias: %d", errno);
 			vm_deallocate(mach_task_self(), rwBase, alignedSize);
 			return;
 		}

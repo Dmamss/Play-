@@ -41,6 +41,8 @@
 #elif defined(MEMFUNC_USE_MACHVM)
 #include <mach/mach_init.h>
 #include <mach/vm_map.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #elif defined(MEMFUNC_USE_MMAP)
 #include <sys/mman.h>
 #include <pthread.h>
@@ -138,45 +140,43 @@ static std::tuple<void*, void*, size_t> TxmSubAllocate(size_t size)
 	return {rwPtr, rxPtr, allocSize};
 }
 
-// Dual-mapped allocation: allocate RW pages then vm_remap to get an RX alias.
+// Dual-mapped allocation matching DolphiniOS approach:
+// 1. mmap RX region first (works with CS_DEBUGGED)
+// 2. vm_remap to create RW alias of the same physical pages
+// 3. mprotect RW alias to PROT_READ | PROT_WRITE
 static std::tuple<void*, void*, size_t> LuckNoTxmAllocate(size_t size)
 {
-	vm_size_t page_size = 0;
-	host_page_size(mach_task_self(), &page_size);
+	size_t page_size = sysconf(_SC_PAGESIZE);
 	size_t allocSize = ((size + page_size - 1) / page_size) * page_size;
 
-	// Allocate RW region
+	// Step 1: Allocate RX region via mmap (same as Dolphin LuckNoTXM)
+	void* rxPtr = mmap(nullptr, allocSize, PROT_READ | PROT_EXEC,
+	                   MAP_ANON | MAP_PRIVATE, -1, 0);
+	if(rxPtr == MAP_FAILED) return {nullptr, nullptr, 0};
+
+	// Step 2: Create RW alias via vm_remap
 	vm_address_t rwAddr = 0;
-	kern_return_t kr = vm_allocate(mach_task_self(), &rwAddr, allocSize, VM_FLAGS_ANYWHERE);
-	if(kr != KERN_SUCCESS) return {nullptr, nullptr, 0};
-
-	kr = vm_protect(mach_task_self(), rwAddr, allocSize, 0, VM_PROT_READ | VM_PROT_WRITE);
+	vm_prot_t curProt = 0;
+	vm_prot_t maxProt = 0;
+	kern_return_t kr = vm_remap(mach_task_self(), &rwAddr, allocSize, 0,
+	                            VM_FLAGS_ANYWHERE, mach_task_self(),
+	                            reinterpret_cast<vm_address_t>(rxPtr), FALSE,
+	                            &curProt, &maxProt, VM_INHERIT_DEFAULT);
 	if(kr != KERN_SUCCESS)
 	{
-		vm_deallocate(mach_task_self(), rwAddr, allocSize);
+		munmap(rxPtr, allocSize);
 		return {nullptr, nullptr, 0};
 	}
 
-	// Create RX alias via vm_remap
-	vm_address_t rxAddr = 0;
-	vm_prot_t curProt, maxProt;
-	kr = vm_remap(mach_task_self(), &rxAddr, allocSize, 0, VM_FLAGS_ANYWHERE,
-	              mach_task_self(), rwAddr, FALSE, &curProt, &maxProt, VM_INHERIT_NONE);
-	if(kr != KERN_SUCCESS)
+	// Step 3: Set RW protection on the alias
+	if(mprotect(reinterpret_cast<void*>(rwAddr), allocSize, PROT_READ | PROT_WRITE) != 0)
 	{
 		vm_deallocate(mach_task_self(), rwAddr, allocSize);
+		munmap(rxPtr, allocSize);
 		return {nullptr, nullptr, 0};
 	}
 
-	kr = vm_protect(mach_task_self(), rxAddr, allocSize, 0, VM_PROT_READ | VM_PROT_EXECUTE);
-	if(kr != KERN_SUCCESS)
-	{
-		vm_deallocate(mach_task_self(), rxAddr, allocSize);
-		vm_deallocate(mach_task_self(), rwAddr, allocSize);
-		return {nullptr, nullptr, 0};
-	}
-
-	return {reinterpret_cast<void*>(rwAddr), reinterpret_cast<void*>(rxAddr), allocSize};
+	return {reinterpret_cast<void*>(rwAddr), rxPtr, allocSize};
 }
 #endif // MEMFUNC_IOS_RUNTIME_JIT_MODES
 
@@ -322,8 +322,8 @@ void CMemoryFunction::Reset()
 		{
 			if(!m_fromTxmRegion)
 			{
-				// LuckNoTXM: deallocate both the RX alias and the RW source
-				vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), m_size);
+				// LuckNoTXM: RX was mmap'd, RW was vm_remap'd
+				munmap(m_code, m_size);
 				vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(m_codeRW), m_size);
 			}
 			// LuckTXM: sub-allocations are not individually freed
