@@ -163,11 +163,15 @@ static std::tuple<void*, void*, size_t> NoTxmPoolSubAllocate(size_t size)
 	size_t page_size = sysconf(_SC_PAGESIZE);
 	size_t allocSize = ((size + page_size - 1) / page_size) * page_size;
 
-	size_t offset = s_noTxmOffset.fetch_add(allocSize, std::memory_order_relaxed);
-	if(offset + allocSize > s_noTxmSize)
+	// CAS loop to avoid temporarily corrupting the offset on overflow
+	size_t offset = s_noTxmOffset.load(std::memory_order_relaxed);
+	while(true)
 	{
-		s_noTxmOffset.fetch_sub(allocSize, std::memory_order_relaxed);
-		return {nullptr, nullptr, 0};
+		if(offset + allocSize > s_noTxmSize)
+			return {nullptr, nullptr, 0};
+		if(s_noTxmOffset.compare_exchange_weak(offset, offset + allocSize,
+		                                       std::memory_order_relaxed))
+			break;
 	}
 
 	void* rwPtr = reinterpret_cast<uint8_t*>(s_noTxmRWBase) + offset;
@@ -276,8 +280,8 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 			m_size       = aSize;
 			m_dualMapped = true;
 			m_fromPool   = (s_noTxmRWBase != nullptr &&
-			                rwPtr >= s_noTxmRWBase &&
-			                rwPtr < reinterpret_cast<uint8_t*>(s_noTxmRWBase) + s_noTxmSize);
+			                reinterpret_cast<uint8_t*>(rwPtr) >= reinterpret_cast<uint8_t*>(s_noTxmRWBase) &&
+			                reinterpret_cast<uint8_t*>(rwPtr) < reinterpret_cast<uint8_t*>(s_noTxmRWBase) + s_noTxmSize);
 			memcpy(m_codeRW, code, size);
 		}
 		else // Legacy
