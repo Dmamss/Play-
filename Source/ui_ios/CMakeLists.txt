@@ -188,7 +188,7 @@ target_compile_options(Play PRIVATE
 target_link_options(Play PRIVATE
     "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT"
     "-F${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT"
-    "-framework" "BreakpointJIT"
+    "-weak_framework" "BreakpointJIT"
 )
 target_compile_definitions(Play PRIVATE ${UI_IOS_DEFINITIONS_LIST})
 
@@ -210,13 +210,19 @@ set_target_properties(
 		XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
 		RESOURCE "${OSX_RES}"
 		XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT ${CMAKE_SOURCE_DIR}/Source/ui_ios/BreakpointJIT"
+		XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks"
 		)
 
+# Collect frameworks to embed in the app bundle
+set(EMBED_FRAMEWORKS_LIST "${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT/BreakpointJIT.framework")
+
 if(USE_GSH_VULKAN)
-	set_target_properties(
-		Play
-		PROPERTIES
-			XCODE_EMBED_FRAMEWORKS "$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework"
-			XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY TRUE
-	)
+	list(APPEND EMBED_FRAMEWORKS_LIST "$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework")
 endif()
+
+set_target_properties(
+	Play
+	PROPERTIES
+		XCODE_EMBED_FRAMEWORKS "${EMBED_FRAMEWORKS_LIST}"
+		XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY TRUE
+)
