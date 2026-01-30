@@ -99,30 +99,35 @@
 
 + (void)allocateExecutableMemoryIfNeeded
 {
-	if(CodeGen::GetJitType() != CodeGen::JitType::LuckTXM)
-	{
-		return;
-	}
+	auto jitType = CodeGen::GetJitType();
 
-	if(CodeGen::IsExecutableMemoryRegionAllocated())
+	if(jitType == CodeGen::JitType::LuckTXM)
 	{
-		NSLog(@"[JITInitializer] Executable memory region already allocated");
-		return;
-	}
+		if(CodeGen::IsExecutableMemoryRegionAllocated())
+		{
+			NSLog(@"[JITInitializer] Executable memory region already allocated");
+			return;
+		}
 
-	NSLog(@"[JITInitializer] Allocating 512MB executable memory region via BreakpointJIT...");
-	CodeGen::AllocateExecutableMemoryRegion();
+		NSLog(@"[JITInitializer] Allocating 512MB executable memory region via BreakpointJIT...");
+		CodeGen::AllocateExecutableMemoryRegion();
 
-	if(CodeGen::IsExecutableMemoryRegionAllocated())
-	{
-		NSLog(@"[JITInitializer] Region allocated: RW=%p RX=%p size=%zu",
-		      CodeGen::GetExecutableMemoryRWBase(),
-		      CodeGen::GetExecutableMemoryRXBase(),
-		      CodeGen::GetExecutableMemoryRegionSize());
+		if(CodeGen::IsExecutableMemoryRegionAllocated())
+		{
+			NSLog(@"[JITInitializer] Region allocated: RW=%p RX=%p size=%zu",
+			      CodeGen::GetExecutableMemoryRWBase(),
+			      CodeGen::GetExecutableMemoryRXBase(),
+			      CodeGen::GetExecutableMemoryRegionSize());
+		}
+		else
+		{
+			NSLog(@"[JITInitializer] ERROR: Failed to allocate executable memory region");
+		}
 	}
-	else
+	else if(jitType == CodeGen::JitType::LuckNoTXM)
 	{
-		NSLog(@"[JITInitializer] ERROR: Failed to allocate executable memory region");
+		// Pre-allocate pooled region to avoid per-block mmap/vm_remap syscalls
+		CodeGen::AllocateNoTxmPool();
 	}
 }
 

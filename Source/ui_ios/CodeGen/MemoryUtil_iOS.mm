@@ -22,8 +22,9 @@
 #define HAS_BREAKPOINTJIT 0
 #endif
 
-// Default pre-allocation size for LuckTXM mode (512MB)
+// Default pre-allocation size (512MB for TXM, 128MB for NoTXM pool)
 static constexpr size_t kDefaultRegionSize = 512 * 1024 * 1024;
+static constexpr size_t kNoTxmPoolSize     = 128 * 1024 * 1024;
 
 // Region tracking for the UI layer
 static bool s_regionAllocated = false;
@@ -72,6 +73,47 @@ namespace CodeGen
 		default:
 			return JitType::Legacy;
 		}
+	}
+
+	void AllocateNoTxmPool()
+	{
+		size_t pageSize = getpagesize();
+		size_t alignedSize = (kNoTxmPoolSize + pageSize - 1) & ~(pageSize - 1);
+
+		NSLog(@"[MemoryUtil_iOS] Pre-allocating %zu byte LuckNoTXM pool...", alignedSize);
+
+		void* rxPtr = mmap(nullptr, alignedSize, PROT_READ | PROT_EXEC,
+		                   MAP_ANON | MAP_PRIVATE, -1, 0);
+		if(rxPtr == MAP_FAILED)
+		{
+			NSLog(@"[MemoryUtil_iOS] LuckNoTXM pool mmap failed — will use per-block allocation");
+			return;
+		}
+
+		vm_address_t rwAddr = 0;
+		vm_prot_t curProt = 0, maxProt = 0;
+		kern_return_t kr = vm_remap(mach_task_self(), &rwAddr, alignedSize, 0,
+		                            VM_FLAGS_ANYWHERE, mach_task_self(),
+		                            reinterpret_cast<vm_address_t>(rxPtr), FALSE,
+		                            &curProt, &maxProt, VM_INHERIT_DEFAULT);
+		if(kr != KERN_SUCCESS)
+		{
+			NSLog(@"[MemoryUtil_iOS] LuckNoTXM pool vm_remap failed: %d", kr);
+			munmap(rxPtr, alignedSize);
+			return;
+		}
+
+		if(mprotect(reinterpret_cast<void*>(rwAddr), alignedSize, PROT_READ | PROT_WRITE) != 0)
+		{
+			NSLog(@"[MemoryUtil_iOS] LuckNoTXM pool mprotect failed");
+			vm_deallocate(mach_task_self(), rwAddr, alignedSize);
+			munmap(rxPtr, alignedSize);
+			return;
+		}
+
+		CMemoryFunctioniOS::SetLuckNoTXMRegion(reinterpret_cast<void*>(rwAddr), rxPtr, alignedSize);
+		NSLog(@"[MemoryUtil_iOS] LuckNoTXM pool allocated: RW=%p RX=%p size=%zu",
+		      (void*)rwAddr, rxPtr, alignedSize);
 	}
 
 	void AllocateExecutableMemoryRegion()

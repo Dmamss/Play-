@@ -100,6 +100,12 @@ namespace
 	static size_t               s_txmSize    = 0;
 	static std::atomic<size_t>  s_txmOffset{0};
 	static std::mutex           s_txmMutex;
+
+	// LuckNoTXM pre-allocated pool state (avoids per-block mmap/vm_remap)
+	static void*                s_noTxmRWBase  = nullptr;
+	static void*                s_noTxmRXBase  = nullptr;
+	static size_t               s_noTxmSize    = 0;
+	static std::atomic<size_t>  s_noTxmOffset{0};
 }
 
 namespace CMemoryFunctioniOS
@@ -117,6 +123,14 @@ namespace CMemoryFunctioniOS
 	}
 
 	size_t GetLuckTXMOffset() { return s_txmOffset.load(std::memory_order_relaxed); }
+
+	void SetLuckNoTXMRegion(void* rwBase, void* rxBase, size_t size)
+	{
+		s_noTxmRWBase = rwBase;
+		s_noTxmRXBase = rxBase;
+		s_noTxmSize   = size;
+		s_noTxmOffset.store(0, std::memory_order_relaxed);
+	}
 }
 
 // Thread-safe bump allocator inside the pre-allocated TXM region.
@@ -140,21 +154,38 @@ static std::tuple<void*, void*, size_t> TxmSubAllocate(size_t size)
 	return {rwPtr, rxPtr, allocSize};
 }
 
-// Dual-mapped allocation matching DolphiniOS approach:
-// 1. mmap RX region first (works with CS_DEBUGGED)
-// 2. vm_remap to create RW alias of the same physical pages
-// 3. mprotect RW alias to PROT_READ | PROT_WRITE
-static std::tuple<void*, void*, size_t> LuckNoTxmAllocate(size_t size)
+// Thread-safe bump allocator inside the pre-allocated LuckNoTXM pool.
+// Returns {rwPtr, rxPtr, allocSize} or falls back to per-block allocation.
+static std::tuple<void*, void*, size_t> NoTxmPoolSubAllocate(size_t size)
+{
+	if(!s_noTxmRWBase) return {nullptr, nullptr, 0};
+
+	size_t page_size = sysconf(_SC_PAGESIZE);
+	size_t allocSize = ((size + page_size - 1) / page_size) * page_size;
+
+	size_t offset = s_noTxmOffset.fetch_add(allocSize, std::memory_order_relaxed);
+	if(offset + allocSize > s_noTxmSize)
+	{
+		s_noTxmOffset.fetch_sub(allocSize, std::memory_order_relaxed);
+		return {nullptr, nullptr, 0};
+	}
+
+	void* rwPtr = reinterpret_cast<uint8_t*>(s_noTxmRWBase) + offset;
+	void* rxPtr = reinterpret_cast<uint8_t*>(s_noTxmRXBase) + offset;
+	return {rwPtr, rxPtr, allocSize};
+}
+
+// Per-block dual-mapped allocation (fallback when pool is not available).
+// Matching DolphiniOS approach: mmap RX first, vm_remap for RW alias.
+static std::tuple<void*, void*, size_t> LuckNoTxmAllocateFallback(size_t size)
 {
 	size_t page_size = sysconf(_SC_PAGESIZE);
 	size_t allocSize = ((size + page_size - 1) / page_size) * page_size;
 
-	// Step 1: Allocate RX region via mmap (same as Dolphin LuckNoTXM)
 	void* rxPtr = mmap(nullptr, allocSize, PROT_READ | PROT_EXEC,
 	                   MAP_ANON | MAP_PRIVATE, -1, 0);
 	if(rxPtr == MAP_FAILED) return {nullptr, nullptr, 0};
 
-	// Step 2: Create RW alias via vm_remap
 	vm_address_t rwAddr = 0;
 	vm_prot_t curProt = 0;
 	vm_prot_t maxProt = 0;
@@ -168,7 +199,6 @@ static std::tuple<void*, void*, size_t> LuckNoTxmAllocate(size_t size)
 		return {nullptr, nullptr, 0};
 	}
 
-	// Step 3: Set RW protection on the alias
 	if(mprotect(reinterpret_cast<void*>(rwAddr), allocSize, PROT_READ | PROT_WRITE) != 0)
 	{
 		vm_deallocate(mach_task_self(), rwAddr, allocSize);
@@ -177,6 +207,14 @@ static std::tuple<void*, void*, size_t> LuckNoTxmAllocate(size_t size)
 	}
 
 	return {reinterpret_cast<void*>(rwAddr), rxPtr, allocSize};
+}
+
+// LuckNoTXM allocation: try pool first, fall back to per-block.
+static std::tuple<void*, void*, size_t> LuckNoTxmAllocate(size_t size)
+{
+	auto result = NoTxmPoolSubAllocate(size);
+	if(std::get<0>(result)) return result;
+	return LuckNoTxmAllocateFallback(size);
 }
 #endif // MEMFUNC_IOS_RUNTIME_JIT_MODES
 
@@ -196,7 +234,7 @@ CMemoryFunction::CMemoryFunction(CMemoryFunction&& rhs)
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 	std::swap(m_codeRW, rhs.m_codeRW);
 	std::swap(m_dualMapped, rhs.m_dualMapped);
-	std::swap(m_fromTxmRegion, rhs.m_fromTxmRegion);
+	std::swap(m_fromPool, rhs.m_fromPool);
 #endif
 #if defined(MEMFUNC_USE_WASM)
 	std::swap(m_wasmModule, rhs.m_wasmModule);
@@ -226,7 +264,7 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 			m_code         = rxPtr; // RX view – used for execution
 			m_size         = aSize;
 			m_dualMapped   = true;
-			m_fromTxmRegion = true;
+			m_fromPool = true;
 			memcpy(m_codeRW, code, size);
 		}
 		else if(mode == CMemoryFunctioniOS::JitMode::LuckNoTXM)
@@ -237,6 +275,9 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 			m_code       = rxPtr;
 			m_size       = aSize;
 			m_dualMapped = true;
+			m_fromPool   = (s_noTxmRWBase != nullptr &&
+			                rwPtr >= s_noTxmRWBase &&
+			                rwPtr < reinterpret_cast<uint8_t*>(s_noTxmRWBase) + s_noTxmSize);
 			memcpy(m_codeRW, code, size);
 		}
 		else // Legacy
@@ -320,13 +361,13 @@ void CMemoryFunction::Reset()
 #if defined(MEMFUNC_IOS_RUNTIME_JIT_MODES)
 		if(m_dualMapped)
 		{
-			if(!m_fromTxmRegion)
+			if(!m_fromPool)
 			{
-				// LuckNoTXM: RX was mmap'd, RW was vm_remap'd
+				// LuckNoTXM fallback: RX was mmap'd, RW was vm_remap'd
 				munmap(m_code, m_size);
 				vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(m_codeRW), m_size);
 			}
-			// LuckTXM: sub-allocations are not individually freed
+			// Pool sub-allocations (TXM or NoTXM pool) are not individually freed
 		}
 		else
 		{
@@ -346,7 +387,7 @@ void CMemoryFunction::Reset()
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 	m_codeRW       = nullptr;
 	m_dualMapped   = false;
-	m_fromTxmRegion = false;
+	m_fromPool = false;
 #endif
 #if defined(MEMFUNC_USE_WASM)
 	m_wasmModule = emscripten::val();
@@ -366,7 +407,7 @@ CMemoryFunction& CMemoryFunction::operator =(CMemoryFunction&& rhs)
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 	std::swap(m_codeRW, rhs.m_codeRW);
 	std::swap(m_dualMapped, rhs.m_dualMapped);
-	std::swap(m_fromTxmRegion, rhs.m_fromTxmRegion);
+	std::swap(m_fromPool, rhs.m_fromPool);
 #endif
 #if defined(MEMFUNC_USE_WASM)
 	std::swap(m_wasmModule, rhs.m_wasmModule);

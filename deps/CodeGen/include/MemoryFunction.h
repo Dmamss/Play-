@@ -45,7 +45,7 @@ private:
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 	void*  m_codeRW       = nullptr; // RW alias for dual-mapped modes
 	bool   m_dualMapped    = false;  // true when RW and RX are separate mappings
-	bool   m_fromTxmRegion = false;  // true when sub-allocated from TXM region
+	bool   m_fromPool      = false;  // true when sub-allocated from pooled region (TXM or NoTXM)
 #endif
 #if defined(__EMSCRIPTEN__)
 	emscripten::val m_wasmModule;

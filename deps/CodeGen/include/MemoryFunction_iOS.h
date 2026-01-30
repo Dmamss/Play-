@@ -17,6 +17,9 @@ namespace CMemoryFunctioniOS
 	// LuckTXM: called once after BreakGetJITMapping to register the pre-allocated region
 	void   SetLuckTXMRegion(void* rwBase, void* rxBase, size_t size);
 
+	// LuckNoTXM: called once at startup to pre-allocate a pooled dual-mapped region
+	void   SetLuckNoTXMRegion(void* rwBase, void* rxBase, size_t size);
+
 	// Returns the current bump-allocator offset inside the TXM region
 	size_t GetLuckTXMOffset();
 }

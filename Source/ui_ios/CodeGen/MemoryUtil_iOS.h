@@ -33,9 +33,13 @@ namespace CodeGen
 	JitType GetJitType();
 
 	/// Pre-allocate the executable memory region for LuckTXM mode.
-	/// Only meaningful when JitType is LuckTXM.
 	/// Allocates a large (512MB) region via BreakpointJIT for use by the JIT compiler.
 	void AllocateExecutableMemoryRegion();
+
+	/// Pre-allocate a pooled dual-mapped region for LuckNoTXM mode.
+	/// Eliminates per-block mmap/vm_remap syscalls for much faster JIT allocation.
+	/// Falls back gracefully to per-block allocation if pool creation fails.
+	void AllocateNoTxmPool();
 
 	/// Check if the executable memory region has been allocated.
 	bool IsExecutableMemoryRegionAllocated();
