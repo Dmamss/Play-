@@ -1,64 +1,47 @@
 #import "JITInitializer.h"
 #include "CodeGen/MemoryUtil_iOS.h"
 #import <Foundation/Foundation.h>
-#import <sys/stat.h>
+#import <sys/sysctl.h>
+#import <sys/mman.h>
 
 @implementation JITInitializer
 
 + (BOOL)deviceHasTXM
 {
-	// Detect TXM (Trusted Execution Monitor) presence
-	// Based on StikDebug implementation
-	// Checks for: /System/Volumes/Preboot/<36 chars>/boot/<96 chars>/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4
-
-	NSFileManager* fileManager = [NSFileManager defaultManager];
-	NSError* error = nil;
-
-	// Primary path
-	NSArray<NSString*>* prebootContents = [fileManager contentsOfDirectoryAtPath:@"/System/Volumes/Preboot" error:&error];
-	if(prebootContents)
+	// --- 1. Primary: check hw.cpufamily against known TXM chips (A15+/M2+) ---
+	uint32_t cpufamily = 0;
+	size_t size = sizeof(cpufamily);
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &size, NULL, 0) == 0)
 	{
-		for(NSString* uuid in prebootContents)
+		switch(cpufamily)
 		{
-			if(uuid.length == 36)
-			{
-				NSString* bootPath = [NSString stringWithFormat:@"/System/Volumes/Preboot/%@/boot", uuid];
-				NSArray<NSString*>* bootContents = [fileManager contentsOfDirectoryAtPath:bootPath error:nil];
-				if(bootContents)
-				{
-					for(NSString* hash in bootContents)
-					{
-						if(hash.length == 96)
-						{
-							NSString* txmPath = [NSString stringWithFormat:@"%@/%@/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4", bootPath, hash];
-							if([fileManager fileExistsAtPath:txmPath])
-							{
-								return YES;
-							}
-						}
-					}
-				}
-			}
+		case 0xDA33D83D: // A15 Bionic
+		case 0x8765EDEA: // A16 Bionic
+		case 0xFA33415E: // A17 Pro
+		case 0x5F4DEA93: // A18
+		case 0x72015832: // A18 Pro
+		case 0x6F5129AC: // M2
+		case 0xDC6E3A2A: // M3
+		case 0x041A314C: // M4
+			NSLog(@"[JITInitializer] TXM detected via cpufamily 0x%08X", cpufamily);
+			return YES;
+		default:
+			NSLog(@"[JITInitializer] cpufamily 0x%08X not in TXM list", cpufamily);
+			break;
 		}
 	}
 
-	// Fallback path
-	NSArray<NSString*>* privatePrebootContents = [fileManager contentsOfDirectoryAtPath:@"/private/preboot" error:nil];
-	if(privatePrebootContents)
+	// --- 2. Fallback: mmap probe — TXM devices reject RWX+MAP_JIT ---
+	void* test = mmap(NULL, 16384, PROT_READ | PROT_WRITE | PROT_EXEC,
+	                  MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
+	if(test == MAP_FAILED)
 	{
-		for(NSString* hash in privatePrebootContents)
-		{
-			if(hash.length == 96)
-			{
-				NSString* txmPath = [NSString stringWithFormat:@"/private/preboot/%@/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4", hash];
-				if([fileManager fileExistsAtPath:txmPath])
-				{
-					return YES;
-				}
-			}
-		}
+		NSLog(@"[JITInitializer] TXM detected via mmap probe (RWX rejected)");
+		return YES;
 	}
+	munmap(test, 16384);
 
+	NSLog(@"[JITInitializer] No TXM detected");
 	return NO;
 }
 
