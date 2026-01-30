@@ -79,8 +79,11 @@
 		}
 		else
 		{
-			NSLog(@"[JITInitializer] Configuring JIT: LuckNoTXM mode (iOS 26+ without TXM)");
-			jitType = CodeGen::JitType::LuckNoTXM;
+			// Non-TXM iOS 26+ (A12-A14, M1): use Legacy vm_protect toggle
+			// Same approach as DolphiniOS — vm_remap dual mapping is not needed
+			// when CS_DEBUGGED allows vm_protect with EXECUTE permission
+			NSLog(@"[JITInitializer] Configuring JIT: Legacy mode (iOS 26+ without TXM)");
+			jitType = CodeGen::JitType::Legacy;
 		}
 	}
 	else
