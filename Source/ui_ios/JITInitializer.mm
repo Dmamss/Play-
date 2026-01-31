@@ -23,10 +23,8 @@
 		case 0x6F5129AC: // M2
 		case 0xDC6E3A2A: // M3
 		case 0x041A314C: // M4
-			NSLog(@"[JITInitializer] TXM detected via cpufamily 0x%08X", cpufamily);
 			return YES;
 		default:
-			NSLog(@"[JITInitializer] cpufamily 0x%08X not in known TXM list, trying model fallback", cpufamily);
 			break;
 		}
 	}
@@ -40,66 +38,37 @@
 	size_t machsize = sizeof(machine);
 	if(sysctlbyname("hw.machine", machine, &machsize, NULL, 0) == 0)
 	{
-		NSLog(@"[JITInitializer] hw.machine = %s", machine);
-
 		int major = 0;
 		if(sscanf(machine, "iPhone%d", &major) == 1)
 		{
-			// iPhone14,x = A15 (first TXM iPhone)
-			if(major >= 14)
-			{
-				NSLog(@"[JITInitializer] TXM detected via model: iPhone major=%d (>=14)", major);
+			if(major >= 14) // iPhone14,x = A15 (first TXM iPhone)
 				return YES;
-			}
 		}
 		else if(sscanf(machine, "iPad%d", &major) == 1)
 		{
-			// iPad13,x = M1/A15 (first TXM iPads)
-			if(major >= 13)
-			{
-				NSLog(@"[JITInitializer] TXM detected via model: iPad major=%d (>=13)", major);
+			if(major >= 13) // iPad13,x = M1/A15 (first TXM iPads)
 				return YES;
-			}
 		}
 	}
 
-	NSLog(@"[JITInitializer] No TXM detected (cpufamily=0x%08X, machine=%s)", cpufamily, machine);
 	return NO;
 }
 
 + (void)initializeJITSystem
 {
-	NSLog(@"[JITInitializer] Detecting JIT mode...");
-
 	CodeGen::JitType jitType;
 
 	if(@available(iOS 26, *))
 	{
 		BOOL hasTXM = [self deviceHasTXM];
-
-		if(hasTXM)
-		{
-			NSLog(@"[JITInitializer] Configuring JIT: LuckTXM mode (iOS 26+ with TXM)");
-			jitType = CodeGen::JitType::LuckTXM;
-		}
-		else
-		{
-			NSLog(@"[JITInitializer] Configuring JIT: LuckNoTXM mode (iOS 26+ without TXM)");
-			jitType = CodeGen::JitType::LuckNoTXM;
-		}
+		jitType = hasTXM ? CodeGen::JitType::LuckTXM : CodeGen::JitType::LuckNoTXM;
 	}
 	else
 	{
-		NSLog(@"[JITInitializer] Configuring JIT: Legacy mode (iOS < 26)");
 		jitType = CodeGen::JitType::Legacy;
 	}
 
-	// Only set the mode — do NOT allocate memory yet.
-	// For LuckTXM, the debugger must be attached first (via StikDebug).
-	// Call allocateExecutableMemoryIfNeeded after activation.
 	CodeGen::SetJitType(jitType);
-
-	NSLog(@"[JITInitializer] JIT mode configured (allocation deferred)");
 }
 
 + (void)allocateExecutableMemoryIfNeeded
@@ -109,29 +78,17 @@
 	if(jitType == CodeGen::JitType::LuckTXM)
 	{
 		if(CodeGen::IsExecutableMemoryRegionAllocated())
-		{
-			NSLog(@"[JITInitializer] Executable memory region already allocated");
 			return;
-		}
 
-		NSLog(@"[JITInitializer] Allocating 512MB executable memory region via BreakpointJIT...");
 		CodeGen::AllocateExecutableMemoryRegion();
 
-		if(CodeGen::IsExecutableMemoryRegionAllocated())
-		{
-			NSLog(@"[JITInitializer] Region allocated: RW=%p RX=%p size=%zu",
-			      CodeGen::GetExecutableMemoryRWBase(),
-			      CodeGen::GetExecutableMemoryRXBase(),
-			      CodeGen::GetExecutableMemoryRegionSize());
-		}
-		else
+		if(!CodeGen::IsExecutableMemoryRegionAllocated())
 		{
 			NSLog(@"[JITInitializer] ERROR: Failed to allocate executable memory region");
 		}
 	}
 	else if(jitType == CodeGen::JitType::LuckNoTXM)
 	{
-		// Pre-allocate pooled region to avoid per-block mmap/vm_remap syscalls
 		CodeGen::AllocateNoTxmPool();
 	}
 }

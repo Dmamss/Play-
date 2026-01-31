@@ -137,8 +137,10 @@ static NSString* const reuseIdentifier = @"coverCell";
 	StikDebugJitService* jitService = [StikDebugJitService sharedService];
 	if([jitService isJitActive])
 	{
-		// Debugger already attached (e.g. from previous StikDebug session) — allocate now
-		[JITInitializer allocateExecutableMemoryIfNeeded];
+		// Debugger already attached — allocate on background thread to avoid watchdog kill
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			[JITInitializer allocateExecutableMemoryIfNeeded];
+		});
 	}
 	else if([jitService needsActivation])
 	{
@@ -177,43 +179,46 @@ static NSString* const reuseIdentifier = @"coverCell";
 	if([jitService isStikDebugInstalled])
 	{
 		UIAlertAction* activateAction = [UIAlertAction actionWithTitle:@"Activate JIT"
-		                                                         style:UIAlertActionStyleDefault
-		                                                       handler:^(UIAlertAction* action) {
-			                                                     [jitService requestActivationWithCompletion:^(BOOL success, NSError* error) {
-				                                                   dispatch_async(dispatch_get_main_queue(), ^{
-					                                                 if(success)
-					                                                 {
-						                                                 // JIT activated — allocate executable memory now that debugger is attached
-						                                                 [JITInitializer allocateExecutableMemoryIfNeeded];
-						                                                 UIAlertController* successAlert = [UIAlertController
-						                                                     alertControllerWithTitle:@"JIT Active"
-						                                                                      message:@"JIT has been activated. You can now play PS2 games!"
-						                                                               preferredStyle:UIAlertControllerStyleAlert];
-						                                                 [successAlert addAction:[UIAlertAction actionWithTitle:@"OK"
-						                                                                                                  style:UIAlertActionStyleDefault
-						                                                                                                handler:nil]];
-						                                                 [self presentViewController:successAlert animated:YES completion:nil];
-					                                                 }
-					                                                 else
-					                                                 {
-						                                                 // Show error
-						                                                 UIAlertController* errorAlert = [UIAlertController
-						                                                     alertControllerWithTitle:@"JIT Activation Failed"
-						                                                                      message:error.localizedDescription
-						                                                               preferredStyle:UIAlertControllerStyleAlert];
-						                                                 [errorAlert addAction:[UIAlertAction actionWithTitle:@"Retry"
-						                                                                                                style:UIAlertActionStyleDefault
-						                                                                                              handler:^(UIAlertAction* action) {
-							                                                                                            [self showJITActivationAlert];
-						                                                                                              }]];
-						                                                 [errorAlert addAction:[UIAlertAction actionWithTitle:@"Cancel"
-						                                                                                                style:UIAlertActionStyleCancel
-						                                                                                              handler:nil]];
-						                                                 [self presentViewController:errorAlert animated:YES completion:nil];
-					                                                 }
-				                                                   });
-			                                                     }];
-		                                                       }];
+		    style:UIAlertActionStyleDefault
+		    handler:^(UIAlertAction* action) {
+			[jitService requestActivationWithCompletion:^(BOOL success, NSError* error) {
+				if(success)
+				{
+					// JIT activated — allocate on background thread to avoid watchdog kill
+					dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+						[JITInitializer allocateExecutableMemoryIfNeeded];
+						dispatch_async(dispatch_get_main_queue(), ^{
+							UIAlertController* successAlert = [UIAlertController
+							    alertControllerWithTitle:@"JIT Active"
+							                     message:@"JIT has been activated. You can now play PS2 games!"
+							              preferredStyle:UIAlertControllerStyleAlert];
+							[successAlert addAction:[UIAlertAction actionWithTitle:@"OK"
+							                                                style:UIAlertActionStyleDefault
+							                                              handler:nil]];
+							[self presentViewController:successAlert animated:YES completion:nil];
+						});
+					});
+				}
+				else
+				{
+					dispatch_async(dispatch_get_main_queue(), ^{
+						UIAlertController* errorAlert = [UIAlertController
+						    alertControllerWithTitle:@"JIT Activation Failed"
+						                     message:error.localizedDescription
+						              preferredStyle:UIAlertControllerStyleAlert];
+						[errorAlert addAction:[UIAlertAction actionWithTitle:@"Retry"
+						                                              style:UIAlertActionStyleDefault
+						                                            handler:^(UIAlertAction* action) {
+							[self showJITActivationAlert];
+						}]];
+						[errorAlert addAction:[UIAlertAction actionWithTitle:@"Cancel"
+						                                              style:UIAlertActionStyleCancel
+						                                            handler:nil]];
+						[self presentViewController:errorAlert animated:YES completion:nil];
+					});
+				}
+			}];
+		}];
 		[alert addAction:activateAction];
 	}
 
