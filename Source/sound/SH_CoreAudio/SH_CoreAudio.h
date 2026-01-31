@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <mutex>
 #include <AudioToolbox/AudioToolbox.h>
 #include "../SoundHandler.h"
 
