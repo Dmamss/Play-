@@ -2211,4 +2211,22 @@ void CGSHandler::ProcessSingleFrame()
 Framework::CBitmap CGSHandler::GetScreenshot()
 {
 	throw std::runtime_error("Screenshot feature is not implemented in current backend.");
+} void CGSHandler::InitializeImpl()
+{
+}
+
+void CGSHandler::ReleaseImpl()
+{
+}
+
+void CGSHandler::ProcessHostToLocalTransfer()
+{
+}
+
+void CGSHandler::ProcessLocalToHostTransfer()
+{
+}
+
+void CGSHandler::ProcessLocalToLocalTransfer()
+{
 }
