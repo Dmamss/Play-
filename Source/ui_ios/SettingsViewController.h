@@ -18,6 +18,11 @@
 	IBOutlet UILabel* frameskipLabel;
 
 	IBOutlet UISwitch* enableAudioOutput;
+	IBOutlet UILabel* audioHandlerName;
+
+	IBOutlet UISwitch* efbAccessSwitch;
+	IBOutlet UISwitch* textureCacheSwitch;
+	IBOutlet UISwitch* gpuSyncSwitch;
 
 	IBOutlet UISwitch* enableAltServerJIT;
 
@@ -34,6 +39,7 @@
 - (IBAction)selectedGsHandler:(UIStoryboardSegue*)segue;
 - (IBAction)selectedResolutionFactor:(UIStoryboardSegue*)segue;
 - (IBAction)selectedFrameskip:(UIStoryboardSegue*)segue;
+- (IBAction)selectedAudioHandler:(UIStoryboardSegue*)segue;
 - (IBAction)startFullDeviceScan;
 - (IBAction)returnToParent;
 

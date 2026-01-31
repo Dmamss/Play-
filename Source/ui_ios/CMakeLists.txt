@@ -44,6 +44,16 @@ if(USE_GSH_VULKAN)
 	list(APPEND UI_IOS_DEFINITIONS_LIST HAS_GSH_VULKAN=1)
 endif()
 
+# Metal backend (native)
+if(NOT TARGET gsh_metal)
+	add_subdirectory(
+		${CMAKE_CURRENT_SOURCE_DIR}/../gs/GSH_Metal
+		${CMAKE_CURRENT_BINARY_DIR}/gs/GSH_Metal
+	)
+endif()
+list(INSERT UI_IOS_PROJECT_LIBS 0 gsh_metal)
+list(APPEND UI_IOS_DEFINITIONS_LIST HAS_GSH_METAL=1)
+
 if(NOT TARGET sh_openal)
 	add_subdirectory(
 		${CMAKE_CURRENT_SOURCE_DIR}/../sound/SH_OpenAL
@@ -51,6 +61,15 @@ if(NOT TARGET sh_openal)
 	)
 endif()
 list(APPEND UI_IOS_PROJECT_LIBS sh_openal)
+
+# CoreAudio backend (native iOS)
+if(NOT TARGET sh_coreaudio)
+	add_subdirectory(
+		${CMAKE_CURRENT_SOURCE_DIR}/../sound/SH_CoreAudio
+		${CMAKE_CURRENT_BINARY_DIR}/SH_CoreAudio
+	)
+endif()
+list(APPEND UI_IOS_PROJECT_LIBS sh_coreaudio)
 
 if(NOT TARGET iCade_Static)
 	add_subdirectory(
@@ -163,6 +182,10 @@ if(USE_GSH_VULKAN)
 	list(APPEND OSX_HEADERS GSH_VulkaniOS.h)
 endif()
 
+# Metal backend (always available on iOS)
+list(APPEND OSX_SOURCES GSH_MetaliOS.mm)
+list(APPEND OSX_HEADERS GSH_MetaliOS.h)
+
 # Add our Executable
 add_executable(Play MACOSX_BUNDLE ${OSX_SOURCES} ${OSX_HEADERS} ${OSX_RES})
 target_compile_options(Play PRIVATE $<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-x objective-c++ -fobjc-arc>)
@@ -173,7 +196,7 @@ target_link_libraries(Play ${COREGRAPHICS_LIBRARY})
 target_link_libraries(Play ${GAMECONTROLLER_LIBRARY})
 target_link_libraries(Play ${QUARTZCORE_LIBRARY})
 target_link_libraries(Play ${IMAGEIO_LIBRARY})
-target_link_libraries(Play ${UI_IOS_PROJECT_LIBS} "-ObjC -lsqlite3 -framework OpenAL")
+target_link_libraries(Play ${UI_IOS_PROJECT_LIBS} "-ObjC -lsqlite3 -framework OpenAL -framework Metal -framework AudioToolbox -framework CoreAudio")
 target_include_directories(Play PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT/BreakpointJIT.framework/Headers"

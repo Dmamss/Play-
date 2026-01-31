@@ -12,9 +12,13 @@
 #ifdef HAS_GSH_VULKAN
 #include "GSH_VulkaniOS.h"
 #endif
+#ifdef HAS_GSH_METAL
+#include "GSH_MetaliOS.h"
+#endif
 #include "../ui_shared/BootableUtils.h"
 #include "PH_Generic.h"
 #include "sound/SH_OpenAL/SH_OpenAL.h"
+#include "sound/SH_CoreAudio/SH_CoreAudio.h"
 #include "../ui_shared/StatsManager.h"
 
 CPS2VM* g_virtualMachine = nullptr;
@@ -45,6 +49,14 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 
 	CAppConfig::GetInstance().RegisterPreferenceInteger(PREFERENCE_PS2_FRAMESKIP, 0);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_CGSHANDLER_GS_RAM_READS_ENABLED, true);
+
+	// Audio handler: default to CoreAudio on iOS
+	CAppConfig::GetInstance().RegisterPreferenceInteger(PREFERENCE_AUDIO_HANDLER, PREFERENCE_VALUE_AUDIO_COREAUDIO);
+
+	// Advanced performance options
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC, false);
 }
 
 - (void)viewDidLoad
@@ -98,6 +110,11 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 #ifdef HAS_GSH_VULKAN
 	case PREFERENCE_VALUE_VIDEO_GS_HANDLER_VULKAN:
 		g_virtualMachine->CreateGSHandler(CGSH_VulkaniOS::GetFactoryFunction((CAMetalLayer*)self.view.layer));
+		break;
+#endif
+#ifdef HAS_GSH_METAL
+	case PREFERENCE_VALUE_VIDEO_GS_HANDLER_METAL:
+		g_virtualMachine->CreateGSHandler(CGSH_MetaliOS::GetFactoryFunction((CAMetalLayer*)self.view.layer));
 		break;
 #endif
 	}
@@ -323,7 +340,18 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 {
 	if(CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_AUDIO_ENABLEOUTPUT))
 	{
-		g_virtualMachine->CreateSoundHandler(&CSH_OpenAL::HandlerFactory);
+		auto audioHandler = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_AUDIO_HANDLER);
+		switch(audioHandler)
+		{
+		default:
+			[[fallthrough]];
+		case PREFERENCE_VALUE_AUDIO_COREAUDIO:
+			g_virtualMachine->CreateSoundHandler(&CSH_CoreAudio::HandlerFactory);
+			break;
+		case PREFERENCE_VALUE_AUDIO_OPENAL:
+			g_virtualMachine->CreateSoundHandler(&CSH_OpenAL::HandlerFactory);
+			break;
+		}
 	}
 	else
 	{

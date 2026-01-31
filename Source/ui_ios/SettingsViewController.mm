@@ -19,7 +19,26 @@
 		[gsHandlerName setText:@"OpenGL"];
 		break;
 	case PREFERENCE_VALUE_VIDEO_GS_HANDLER_VULKAN:
-		[gsHandlerName setText:@"Vulkan (Metal)"];
+		[gsHandlerName setText:@"Vulkan (MoltenVK)"];
+		break;
+	case PREFERENCE_VALUE_VIDEO_GS_HANDLER_METAL:
+		[gsHandlerName setText:@"Metal (Native)"];
+		break;
+	}
+}
+
+- (void)updateAudioHandlerNameLabel
+{
+	int audioHandlerId = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_AUDIO_HANDLER);
+	switch(audioHandlerId)
+	{
+	default:
+		[[fallthrough]];
+	case PREFERENCE_VALUE_AUDIO_COREAUDIO:
+		[audioHandlerName setText:@"CoreAudio"];
+		break;
+	case PREFERENCE_VALUE_AUDIO_OPENAL:
+		[audioHandlerName setText:@"OpenAL"];
 		break;
 	}
 }
@@ -57,6 +76,11 @@
 	[self updateFrameskipLabel];
 
 	[enableAudioOutput setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_AUDIO_ENABLEOUTPUT)];
+	[self updateAudioHandlerNameLabel];
+
+	[efbAccessSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS)];
+	[textureCacheSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE)];
+	[gpuSyncSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC)];
 
 	[enableAltServerJIT setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_ALTSTORE_JIT_ENABLED)];
 
@@ -81,6 +105,10 @@
 
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_AUDIO_ENABLEOUTPUT, enableAudioOutput.isOn);
 
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS, efbAccessSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE, textureCacheSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC, gpuSyncSwitch.isOn);
+
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_ALTSTORE_JIT_ENABLED, enableAltServerJIT.isOn);
 
 	CAppConfig::GetInstance().Save();
@@ -100,11 +128,7 @@
 {
 	if([identifier isEqualToString:@"showGsHandlerSelector"])
 	{
-#ifdef HAS_GSH_VULKAN
 		return self.allowGsHandlerSelection;
-#else
-		return FALSE;
-#endif
 	}
 	return TRUE;
 }
@@ -126,6 +150,11 @@
 	{
 		SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.destinationViewController;
 		selector.value = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_PS2_FRAMESKIP);
+	}
+	else if([segue.identifier isEqualToString:@"showAudioHandlerSelector"])
+	{
+		SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.destinationViewController;
+		selector.value = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_AUDIO_HANDLER);
 	}
 }
 
@@ -149,6 +178,13 @@
 	SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.sourceViewController;
 	CAppConfig::GetInstance().SetPreferenceInteger(PREFERENCE_PS2_FRAMESKIP, selector.value);
 	[self updateFrameskipLabel];
+}
+
+- (IBAction)selectedAudioHandler:(UIStoryboardSegue*)segue
+{
+	SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.sourceViewController;
+	CAppConfig::GetInstance().SetPreferenceInteger(PREFERENCE_AUDIO_HANDLER, selector.value);
+	[self updateAudioHandlerNameLabel];
 }
 
 - (IBAction)startFullDeviceScan

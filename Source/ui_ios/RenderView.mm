@@ -16,6 +16,8 @@
 		return [CAEAGLLayer class];
 	case PREFERENCE_VALUE_VIDEO_GS_HANDLER_VULKAN:
 		return [CAMetalLayer class];
+	case PREFERENCE_VALUE_VIDEO_GS_HANDLER_METAL:
+		return [CAMetalLayer class];
 	}
 }
 
