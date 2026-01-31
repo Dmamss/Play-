@@ -69,6 +69,7 @@ target_link_libraries(PsfPlayer ${AVFOUNDATION_LIBRARY})
 target_link_libraries(PsfPlayer ${COREGRAPHICS_LIBRARY})
 target_link_libraries(PsfPlayer ${MEDIAPLAYER_LIBRARY})
 target_link_libraries(PsfPlayer ${PSF_UI_IOS_PROJECT_LIBS} "-ObjC")
+target_link_libraries(PsfPlayer PlayCore)
 
 # AOT stuff
 if(USE_AOT_CACHE)
