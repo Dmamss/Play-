@@ -353,7 +353,10 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
 )";
 
 		MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
-		options.languageVersion = MTLLanguageVersion2_4;
+		if(@available(iOS 15.0, *))
+		{
+			options.languageVersion = MTLLanguageVersion2_4;
+		}
 		m_library = [m_device newLibraryWithSource:shaderSource options:options error:&error];
 		if(error)
 		{
@@ -538,29 +541,19 @@ void CGSH_Metal::VertexKick(uint8 registerId, uint64 data)
 	auto& currentContext = m_nReg[GS_REG_PRIM];
 	auto prim = make_convertible<PRIM>(currentContext);
 
-	if(registerId == GS_REG_XYZ2 || registerId == GS_REG_XYZ3)
-	{
-		auto xyz = make_convertible<XYZ>(data);
-		auto& vtx = m_vtxBuffer[m_vtxCount];
-		vtx.position.x = xyz.GetX();
-		vtx.position.y = xyz.GetY();
-		vtx.position.z = (float)xyz.nZ / 4294967296.0f;
-		vtx.rgbaq = m_nReg[GS_REG_RGBAQ];
-		vtx.uv = m_nReg[GS_REG_UV];
-		vtx.st = m_nReg[GS_REG_ST];
-		vtx.fog = (float)m_nReg[GS_REG_FOG] / 255.0f;
-	}
-	else // XYZF
+	auto& vtx = m_vtxBuffer[m_vtxCount];
+	vtx.position = data;
+	vtx.rgbaq = m_nReg[GS_REG_RGBAQ];
+	vtx.uv = m_nReg[GS_REG_UV];
+	vtx.st = m_nReg[GS_REG_ST];
+	if(registerId == GS_REG_XYZF2 || registerId == GS_REG_XYZF3)
 	{
 		auto xyzf = make_convertible<XYZF>(data);
-		auto& vtx = m_vtxBuffer[m_vtxCount];
-		vtx.position.x = xyzf.GetX();
-		vtx.position.y = xyzf.GetY();
-		vtx.position.z = (float)xyzf.nZ / 16777216.0f;
-		vtx.rgbaq = m_nReg[GS_REG_RGBAQ];
-		vtx.uv = m_nReg[GS_REG_UV];
-		vtx.st = m_nReg[GS_REG_ST];
-		vtx.fog = (float)xyzf.nF / 255.0f;
+		vtx.fog = xyzf.nF;
+	}
+	else
+	{
+		vtx.fog = static_cast<uint8>(m_nReg[GS_REG_FOG] >> 56);
 	}
 
 	m_vtxCount++;
@@ -652,12 +645,17 @@ void CGSH_Metal::Prim_Triangle()
 		auto& vtx = m_vtxBuffer[i];
 		auto& mv = m_mappedVertices[m_currentVertex++];
 
-		float x = (vtx.position.x - m_primOfsX) / screenW * 2.0f - 1.0f;
-		float y = -((vtx.position.y - m_primOfsY) / screenH * 2.0f - 1.0f);
+		auto xyz = make_convertible<XYZ>(vtx.position);
+		float posX = xyz.GetX();
+		float posY = xyz.GetY();
+		float posZ = (float)xyz.nZ / 4294967296.0f;
+
+		float x = (posX - m_primOfsX) / screenW * 2.0f - 1.0f;
+		float y = -((posY - m_primOfsY) / screenH * 2.0f - 1.0f);
 
 		mv.position[0] = x;
 		mv.position[1] = y;
-		mv.position[2] = vtx.position.z;
+		mv.position[2] = posZ;
 		mv.position[3] = 1.0f;
 
 		auto rgbaq = make_convertible<RGBAQ>(vtx.rgbaq);
@@ -686,11 +684,13 @@ void CGSH_Metal::Prim_Sprite()
 	auto& vtx0 = m_vtxBuffer[0];
 	auto& vtx1 = m_vtxBuffer[1];
 
-	float x0 = (vtx0.position.x - m_primOfsX) / screenW * 2.0f - 1.0f;
-	float y0 = -((vtx0.position.y - m_primOfsY) / screenH * 2.0f - 1.0f);
-	float x1 = (vtx1.position.x - m_primOfsX) / screenW * 2.0f - 1.0f;
-	float y1 = -((vtx1.position.y - m_primOfsY) / screenH * 2.0f - 1.0f);
-	float z = vtx1.position.z;
+	auto xyz0 = make_convertible<XYZ>(vtx0.position);
+	auto xyz1 = make_convertible<XYZ>(vtx1.position);
+	float x0 = (xyz0.GetX() - m_primOfsX) / screenW * 2.0f - 1.0f;
+	float y0 = -((xyz0.GetY() - m_primOfsY) / screenH * 2.0f - 1.0f);
+	float x1 = (xyz1.GetX() - m_primOfsX) / screenW * 2.0f - 1.0f;
+	float y1 = -((xyz1.GetY() - m_primOfsY) / screenH * 2.0f - 1.0f);
+	float z = (float)xyz1.nZ / 4294967296.0f;
 
 	auto rgbaq = make_convertible<RGBAQ>(vtx1.rgbaq);
 	float r = (float)rgbaq.nR / 255.0f;
@@ -754,7 +754,7 @@ void CGSH_Metal::FlushVertices()
 
 	id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPass];
 
-	bool textured = m_primitiveMode.IsTextured();
+	bool textured = m_primitiveMode.nTexture;
 	[encoder setRenderPipelineState:textured ? m_drawPipelineTextured : m_drawPipelineFlat];
 	[encoder setDepthStencilState:m_depthTestingEnabled ? m_depthLessEqual : m_depthDisabled];
 	[encoder setVertexBuffer:m_vertexBuffer offset:0 atIndex:0];
@@ -817,9 +817,9 @@ void CGSH_Metal::DoPresent(const DISPLAY_INFO& dispInfo)
 		// Present each display layer
 		for(int i = 0; i < 2; i++)
 		{
-			if(!dispInfo.layer[i].enabled) continue;
+			if(!dispInfo.layers[i].enabled) continue;
 
-			auto& layer = dispInfo.layer[i];
+			auto& layer = dispInfo.layers[i];
 
 			PresentUniforms uniforms = {};
 			uniforms.srcSize = simd_make_float2(layer.width, layer.height);
