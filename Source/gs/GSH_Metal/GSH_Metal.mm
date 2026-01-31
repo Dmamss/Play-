@@ -155,15 +155,15 @@ void CGSH_Metal::CreateBuffers()
 {
 	// GS memory buffer (4MB shared)
 	m_gsMemoryBuffer = [m_device newBufferWithLength:GS_RAM_SIZE
-	                                        options:MTLResourceStorageModeShared];
+	                                         options:MTLResourceStorageModeShared];
 
 	// CLUT buffer (1024 entries * 4 bytes)
 	m_clutBuffer = [m_device newBufferWithLength:1024 * sizeof(uint32_t)
-	                                    options:MTLResourceStorageModeShared];
+	                                     options:MTLResourceStorageModeShared];
 
 	// Vertex buffer
 	m_vertexBuffer = [m_device newBufferWithLength:VERTEX_BUFFER_SIZE
-	                                      options:MTLResourceStorageModeShared];
+	                                       options:MTLResourceStorageModeShared];
 	m_mappedVertices = static_cast<MetalVertex*>([m_vertexBuffer contents]);
 }
 
@@ -485,17 +485,17 @@ void CGSH_Metal::CreatePresentRenderTargets(uint32 width, uint32 height)
 	if(width == 0 || height == 0) return;
 
 	MTLTextureDescriptor* colorDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-	                                                                                    width:width
-	                                                                                   height:height
-	                                                                                mipmapped:NO];
+	                                                                                     width:width
+	                                                                                    height:height
+	                                                                                 mipmapped:NO];
 	colorDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
 	colorDesc.storageMode = MTLStorageModePrivate;
 	m_presentColorTexture = [m_device newTextureWithDescriptor:colorDesc];
 
 	MTLTextureDescriptor* depthDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
-	                                                                                    width:width
-	                                                                                   height:height
-	                                                                                mipmapped:NO];
+	                                                                                     width:width
+	                                                                                    height:height
+	                                                                                 mipmapped:NO];
 	depthDesc.usage = MTLTextureUsageRenderTarget;
 	depthDesc.storageMode = MTLStorageModePrivate;
 	m_presentDepthTexture = [m_device newTextureWithDescriptor:depthDesc];
@@ -570,19 +570,35 @@ void CGSH_Metal::VertexKick(uint8 registerId, uint64 data)
 	switch(m_primitiveType)
 	{
 	case PRIM_POINT:
-		if(m_vtxCount >= 1) { Prim_Point(); m_vtxCount = 0; }
+		if(m_vtxCount >= 1)
+		{
+			Prim_Point();
+			m_vtxCount = 0;
+		}
 		break;
 	case PRIM_LINE:
 	case PRIM_LINESTRIP:
-		if(m_vtxCount >= 2) { Prim_Line(); m_vtxCount = 0; }
+		if(m_vtxCount >= 2)
+		{
+			Prim_Line();
+			m_vtxCount = 0;
+		}
 		break;
 	case PRIM_TRIANGLE:
 	case PRIM_TRIANGLESTRIP:
 	case PRIM_TRIANGLEFAN:
-		if(m_vtxCount >= 3) { Prim_Triangle(); m_vtxCount = 0; }
+		if(m_vtxCount >= 3)
+		{
+			Prim_Triangle();
+			m_vtxCount = 0;
+		}
 		break;
 	case PRIM_SPRITE:
-		if(m_vtxCount >= 2) { Prim_Sprite(); m_vtxCount = 0; }
+		if(m_vtxCount >= 2)
+		{
+			Prim_Sprite();
+			m_vtxCount = 0;
+		}
 		break;
 	}
 }
@@ -780,7 +796,8 @@ void CGSH_Metal::DoPresent(const DISPLAY_INFO& dispInfo)
 {
 	if(!m_metalLayer) return;
 
-	@autoreleasepool {
+	@autoreleasepool
+	{
 		m_currentDrawable = [m_metalLayer nextDrawable];
 		if(!m_currentDrawable) return;
 
