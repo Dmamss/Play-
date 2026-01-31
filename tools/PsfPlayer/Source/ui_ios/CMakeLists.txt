@@ -70,7 +70,9 @@ target_link_libraries(PsfPlayer ${COREGRAPHICS_LIBRARY})
 target_link_libraries(PsfPlayer ${MEDIAPLAYER_LIBRARY})
 target_link_libraries(PsfPlayer ${PSF_UI_IOS_PROJECT_LIBS} "-ObjC")
 target_link_libraries(PsfPlayer PlayCore)
-
+target_link_options(PsfPlayer PRIVATE
+    "-Wl,-force_load,$<TARGET_FILE:PlayCore>"
+)
 # AOT stuff
 if(USE_AOT_CACHE)
 	target_link_libraries(PsfPlayer "${CMAKE_CURRENT_SOURCE_DIR}/../../build_aot/output/macho/$(CURRENT_ARCH)/PsfBlocks.o")
