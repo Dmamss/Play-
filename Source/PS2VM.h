@@ -70,6 +70,7 @@ public:
 
 	void SetEeFrequencyScale(uint32, uint32);
 	void ReloadFrameRateLimit();
+	void ReloadFrameSkip();
 
 	static fs::path GetStateDirectoryPath();
 	fs::path GenerateStatePath(unsigned int) const;
@@ -170,6 +171,8 @@ private:
 	static const int m_eeTickStep = 4800;
 	int m_iopTickStep = 0;
 	CFrameLimiter m_frameLimiter;
+	int m_frameskip = 0;
+	int m_frameskipCounter = 0;
 
 	CPU_UTILISATION_INFO m_cpuUtilisation;
 

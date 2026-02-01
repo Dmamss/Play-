@@ -6,10 +6,11 @@
 //
 
 #import "StikDebugJitService.h"
-#import <BreakpointJIT/BreakpointJIT.h>
+#import <BreakpointJIT/BreakJIT.h>
 #include "AppConfig.h"
 #import "PreferenceDefs.h"
 #include <sys/sysctl.h>
+#include <sys/mman.h>
 #include <signal.h>
 
 // CS_DEBUGGED flag
@@ -116,10 +117,10 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		return NO;
 	}
 
-	// Check chip (A15+ / M2+ have TXM)
+	// --- 1. Check hw.cpufamily against known TXM chips ---
 	uint32_t cpufamily = 0;
-	size_t size = sizeof(cpufamily);
-	if(sysctlbyname("hw.cpufamily", &cpufamily, &size, NULL, 0) == 0)
+	size_t cpusize = sizeof(cpufamily);
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &cpusize, NULL, 0) == 0)
 	{
 		switch(cpufamily)
 		{
@@ -137,14 +138,18 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		}
 	}
 
-	// Fallback: Try mmap to detect if TXM blocks it
-	void* test = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
-	                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
-	if(test == MAP_FAILED)
+	// --- 2. Fallback: detect TXM via hw.machine model identifier ---
+	char machine[64] = {0};
+	size_t machsize = sizeof(machine);
+	if(sysctlbyname("hw.machine", machine, &machsize, NULL, 0) == 0)
 	{
-		return YES; // TXM is blocking
+		int major = 0;
+		if(sscanf(machine, "iPhone%d", &major) == 1 && major >= 14)
+			return YES;
+		if(sscanf(machine, "iPad%d", &major) == 1 && major >= 13)
+			return YES;
 	}
-	munmap(test, 4096);
+
 	return NO;
 }
 
@@ -194,11 +199,13 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (BOOL)isJitAvailable
 {
-	if(!_txmActive)
+	if(_iosVersion >= 26.0f)
 	{
-		return YES; // No TXM = JIT always available
+		// iOS 26+: Both LuckTXM and LuckNoTXM require CS_DEBUGGED
+		// (vm_protect EXECUTE needs debugger even without TXM)
+		return [self isDebuggerAttached];
 	}
-	return [self isDebuggerAttached];
+	return YES; // Legacy path
 }
 
 - (BOOL)jitEnabled
@@ -206,9 +213,63 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 	return [self isJitAvailable];
 }
 
+- (BOOL)isJitActive
+{
+	return [self isJitAvailable];
+}
+
 - (BOOL)needsActivation
 {
-	return _txmActive && ![self isDebuggerAttached];
+	if(_iosVersion >= 26.0f)
+	{
+		// iOS 26+: Both TXM and non-TXM devices need debugger for JIT
+		return ![self isDebuggerAttached];
+	}
+	return NO;
+}
+
+- (BOOL)isStikDebugInstalled
+{
+	NSURL* stikDebugURL = [NSURL URLWithString:@"stikdebug://"];
+	return [[UIApplication sharedApplication] canOpenURL:stikDebugURL];
+}
+
+- (void)setEnvironmentForJIT
+{
+	if(_txmActive)
+	{
+		setenv("PLAY_HAS_TXM", "1", 1);
+		NSLog(@"[StikDebugJIT] Set PLAY_HAS_TXM=1");
+	}
+	if([self isDebuggerAttached])
+	{
+		setenv("PLAY_JIT_ACTIVE", "1", 1);
+		NSLog(@"[StikDebugJIT] Set PLAY_JIT_ACTIVE=1");
+	}
+}
+
+- (BOOL)handleCallbackURL:(NSURL*)url
+{
+	NSString* scheme = [url scheme];
+	if(![scheme isEqualToString:@"play"] && ![scheme isEqualToString:@"com.virtualapplications.play"])
+	{
+		return NO;
+	}
+
+	NSString* host = [url host];
+	if([host isEqualToString:@"jit-enabled"] || [host isEqualToString:@"jit-callback"])
+	{
+		NSLog(@"[StikDebugJIT] JIT callback received from StikDebug");
+		if([self isDebuggerAttached])
+		{
+			setenv("PLAY_HAS_TXM", "1", 1);
+			setenv("PLAY_JIT_ACTIVE", "1", 1);
+			NSLog(@"[StikDebugJIT] JIT confirmed active via callback");
+		}
+		return YES;
+	}
+
+	return NO;
 }
 
 #pragma mark - Activation
@@ -264,9 +325,9 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 
 - (void)requestActivation:(void (^)(BOOL success))completion
 {
-	if(!_txmActive)
+	if(_iosVersion < 26.0f)
 	{
-		NSLog(@"[StikDebugJIT] No TXM - activation not needed");
+		NSLog(@"[StikDebugJIT] Legacy iOS - StikDebug activation not needed");
 		if(completion) completion(YES);
 		return;
 	}
@@ -337,6 +398,23 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 			});
 		  }];
 	});
+}
+
+- (void)requestActivationWithCompletion:(void (^)(BOOL success, NSError* error))completion
+{
+	[self requestActivation:^(BOOL success) {
+	  if(completion)
+	  {
+		  NSError* error = nil;
+		  if(!success)
+		  {
+			  error = [NSError errorWithDomain:@"com.virtualapplications.play.jit"
+				                          code:-1
+				                      userInfo:@{NSLocalizedDescriptionKey : @"Failed to activate JIT. Make sure StikDebug is installed and try again."}];
+		  }
+		  completion(success, error);
+	  }
+	}];
 }
 
 - (BOOL)waitForDebugger:(uint32_t)timeout_ms

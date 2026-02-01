@@ -95,6 +95,8 @@ set(OSX_SOURCES
 	StikDebugJitService.mm
 	AppDelegate.mm
 	JITInitializer.mm
+	PlayJIT.mm
+	CodeGen/MemoryUtil_iOS.mm
 	BackgroundLayer.m
 	CoverViewCell.m
 	CoverViewController.mm
@@ -117,6 +119,8 @@ set(OSX_HEADERS
 	AltServerJitService.h
 	StikDebugJitService.h
 	JITInitializer.h
+	PlayJIT.h
+	CodeGen/MemoryUtil_iOS.h
 	Bridging-Header.h
 	AppDelegate.h
 	BackgroundLayer.h
@@ -171,11 +175,21 @@ target_link_libraries(Play ${QUARTZCORE_LIBRARY})
 target_link_libraries(Play ${IMAGEIO_LIBRARY})
 target_link_libraries(Play ${UI_IOS_PROJECT_LIBS} "-ObjC -lsqlite3 -framework OpenAL")
 target_include_directories(Play PRIVATE
-    "${CMAKE_SOURCE_DIR}/Source/ui_ios/BreakpointJIT/BreakpointJIT.framework/Headers"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT/BreakpointJIT.framework/Headers"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../deps/CodeGen/include"
 )
 
-# BreakpointJIT framework search path
-target_link_options(Play PRIVATE "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT")
+# BreakpointJIT framework search path for compile + link
+target_compile_options(Play PRIVATE
+    "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT"
+    "-F${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT"
+)
+target_link_options(Play PRIVATE
+    "-F${CMAKE_CURRENT_SOURCE_DIR}/../../deps/BreakpointJIT"
+    "-F${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT"
+    "-weak_framework" "BreakpointJIT"
+)
 target_compile_definitions(Play PRIVATE ${UI_IOS_DEFINITIONS_LIST})
 
 # Set a custom plist file for the app bundle
@@ -194,15 +208,23 @@ set_target_properties(
 		MACOSX_BUNDLE_COPYRIGHT "© Virtual Applications, 2017"
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
 		XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+		XCODE_ATTRIBUTE_GCC_OPTIMIZATION_LEVEL[variant=Release] "3"
+		XCODE_ATTRIBUTE_LLVM_LTO[variant=Release] "YES_THIN"
 		RESOURCE "${OSX_RES}"
-		XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT"
+		XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/deps/BreakpointJIT ${CMAKE_SOURCE_DIR}/Source/ui_ios/BreakpointJIT"
+		XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks"
 		)
 
+# Collect frameworks to embed in the app bundle
+set(EMBED_FRAMEWORKS_LIST "${CMAKE_CURRENT_SOURCE_DIR}/BreakpointJIT/BreakpointJIT.framework")
+
 if(USE_GSH_VULKAN)
-	set_target_properties(
-		Play
-		PROPERTIES
-			XCODE_EMBED_FRAMEWORKS "$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework"
-			XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY TRUE
-	)
+	list(APPEND EMBED_FRAMEWORKS_LIST "$ENV{VULKAN_SDK}/lib/MoltenVK.xcframework")
 endif()
+
+set_target_properties(
+	Play
+	PROPERTIES
+		XCODE_EMBED_FRAMEWORKS "${EMBED_FRAMEWORKS_LIST}"
+		XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY TRUE
+)

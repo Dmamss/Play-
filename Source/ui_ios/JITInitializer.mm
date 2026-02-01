@@ -1,112 +1,139 @@
 #import "JITInitializer.h"
-#include "../CodeGen/include/MemoryUtil.h"
+#include "CodeGen/MemoryUtil_iOS.h"
 #import <Foundation/Foundation.h>
-#import <sys/stat.h>
+#import <sys/sysctl.h>
+#import <sys/mman.h>
 
 @implementation JITInitializer
 
 + (BOOL)deviceHasTXM
 {
-	// Detect TXM (Trusted Execution Monitor) presence
-	// Based on StikDebug implementation
-	// Checks for: /System/Volumes/Preboot/<36 chars>/boot/<96 chars>/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4
-
-	NSFileManager* fileManager = [NSFileManager defaultManager];
-	NSError* error = nil;
-
-	// Primary path
-	NSArray<NSString*>* prebootContents = [fileManager contentsOfDirectoryAtPath:@"/System/Volumes/Preboot" error:&error];
-	if(prebootContents)
+	// --- 1. Primary: check hw.cpufamily against known TXM chips ---
+	uint32_t cpufamily = 0;
+	size_t cpusize = sizeof(cpufamily);
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &cpusize, NULL, 0) == 0)
 	{
-		for(NSString* uuid in prebootContents)
+		switch(cpufamily)
 		{
-			if(uuid.length == 36)
+		case 0xDA33D83D: // A15 Bionic
+		case 0x8765EDEA: // A16 Bionic
+		case 0xFA33415E: // A17 Pro
+		case 0x5F4DEA93: // A18
+		case 0x72015832: // A18 Pro
+		case 0x6F5129AC: // M2
+		case 0xDC6E3A2A: // M3
+		case 0x041A314C: // M4
+			NSLog(@"[JITInitializer] TXM detected via cpufamily 0x%08X", cpufamily);
+			return YES;
+		default:
+			NSLog(@"[JITInitializer] cpufamily 0x%08X not in known TXM list, trying model fallback", cpufamily);
+			break;
+		}
+	}
+
+	// --- 2. Fallback: detect TXM via hw.machine model identifier ---
+	// TXM is present on A15+ chips. Device model numbers that have TXM:
+	//   iPhone14,x and later (A15+)
+	//   iPad13,x and later (M1/A15+)
+	// Parse the major model number to detect TXM generically.
+	char machine[64] = {0};
+	size_t machsize = sizeof(machine);
+	if(sysctlbyname("hw.machine", machine, &machsize, NULL, 0) == 0)
+	{
+		NSLog(@"[JITInitializer] hw.machine = %s", machine);
+
+		int major = 0;
+		if(sscanf(machine, "iPhone%d", &major) == 1)
+		{
+			// iPhone14,x = A15 (first TXM iPhone)
+			if(major >= 14)
 			{
-				NSString* bootPath = [NSString stringWithFormat:@"/System/Volumes/Preboot/%@/boot", uuid];
-				NSArray<NSString*>* bootContents = [fileManager contentsOfDirectoryAtPath:bootPath error:nil];
-				if(bootContents)
-				{
-					for(NSString* hash in bootContents)
-					{
-						if(hash.length == 96)
-						{
-							NSString* txmPath = [NSString stringWithFormat:@"%@/%@/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4", bootPath, hash];
-							if([fileManager fileExistsAtPath:txmPath])
-							{
-								return YES;
-							}
-						}
-					}
-				}
+				NSLog(@"[JITInitializer] TXM detected via model: iPhone major=%d (>=14)", major);
+				return YES;
+			}
+		}
+		else if(sscanf(machine, "iPad%d", &major) == 1)
+		{
+			// iPad13,x = M1/A15 (first TXM iPads)
+			if(major >= 13)
+			{
+				NSLog(@"[JITInitializer] TXM detected via model: iPad major=%d (>=13)", major);
+				return YES;
 			}
 		}
 	}
 
-	// Fallback path
-	NSArray<NSString*>* privatePrebootContents = [fileManager contentsOfDirectoryAtPath:@"/private/preboot" error:nil];
-	if(privatePrebootContents)
-	{
-		for(NSString* hash in privatePrebootContents)
-		{
-			if(hash.length == 96)
-			{
-				NSString* txmPath = [NSString stringWithFormat:@"/private/preboot/%@/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4", hash];
-				if([fileManager fileExistsAtPath:txmPath])
-				{
-					return YES;
-				}
-			}
-		}
-	}
-
+	NSLog(@"[JITInitializer] No TXM detected (cpufamily=0x%08X, machine=%s)", cpufamily, machine);
 	return NO;
 }
 
 + (void)initializeJITSystem
 {
-	NSLog(@"[JITInitializer] Initializing CodeGen JIT system...");
+	NSLog(@"[JITInitializer] Detecting JIT mode...");
 
-	// Detect iOS version and TXM status
-	BOOL hasTXM = NO;
 	CodeGen::JitType jitType;
 
 	if(@available(iOS 26, *))
 	{
-		// iOS 26+
-		hasTXM = [self deviceHasTXM];
+		BOOL hasTXM = [self deviceHasTXM];
 
 		if(hasTXM)
 		{
-			// iOS 26+ with TXM: LuckTXM mode (most performant)
 			NSLog(@"[JITInitializer] Configuring JIT: LuckTXM mode (iOS 26+ with TXM)");
 			jitType = CodeGen::JitType::LuckTXM;
 		}
 		else
 		{
-			// iOS 26+ without TXM: LuckNoTXM mode
 			NSLog(@"[JITInitializer] Configuring JIT: LuckNoTXM mode (iOS 26+ without TXM)");
 			jitType = CodeGen::JitType::LuckNoTXM;
 		}
 	}
 	else
 	{
-		// iOS < 26: Legacy mode
 		NSLog(@"[JITInitializer] Configuring JIT: Legacy mode (iOS < 26)");
 		jitType = CodeGen::JitType::Legacy;
 	}
 
-	// Configure CodeGen with detected mode
+	// Only set the mode — do NOT allocate memory yet.
+	// For LuckTXM, the debugger must be attached first (via StikDebug).
+	// Call allocateExecutableMemoryIfNeeded after activation.
 	CodeGen::SetJitType(jitType);
 
-	// Pre-allocate executable memory region if using LuckTXM
+	NSLog(@"[JITInitializer] JIT mode configured (allocation deferred)");
+}
+
++ (void)allocateExecutableMemoryIfNeeded
+{
+	auto jitType = CodeGen::GetJitType();
+
 	if(jitType == CodeGen::JitType::LuckTXM)
 	{
-		NSLog(@"[JITInitializer] Pre-allocating 512MB executable memory region...");
-		CodeGen::AllocateExecutableMemoryRegion();
-		NSLog(@"[JITInitializer] Memory region allocated successfully");
-	}
+		if(CodeGen::IsExecutableMemoryRegionAllocated())
+		{
+			NSLog(@"[JITInitializer] Executable memory region already allocated");
+			return;
+		}
 
-	NSLog(@"[JITInitializer] CodeGen JIT system initialized successfully");
+		NSLog(@"[JITInitializer] Allocating 512MB executable memory region via BreakpointJIT...");
+		CodeGen::AllocateExecutableMemoryRegion();
+
+		if(CodeGen::IsExecutableMemoryRegionAllocated())
+		{
+			NSLog(@"[JITInitializer] Region allocated: RW=%p RX=%p size=%zu",
+			      CodeGen::GetExecutableMemoryRWBase(),
+			      CodeGen::GetExecutableMemoryRXBase(),
+			      CodeGen::GetExecutableMemoryRegionSize());
+		}
+		else
+		{
+			NSLog(@"[JITInitializer] ERROR: Failed to allocate executable memory region");
+		}
+	}
+	else if(jitType == CodeGen::JitType::LuckNoTXM)
+	{
+		// Pre-allocate pooled region to avoid per-block mmap/vm_remap syscalls
+		CodeGen::AllocateNoTxmPool();
+	}
 }
 
 @end

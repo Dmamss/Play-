@@ -12,6 +12,10 @@
 	IBOutlet UILabel* resolutionFactor;
 	IBOutlet UISwitch* resizeOutputToWidescreen;
 	IBOutlet UISwitch* forceBilinearFiltering;
+	IBOutlet UISwitch* gsRamReadsSwitch;
+
+	IBOutlet UISwitch* limitFrameRateSwitch;
+	IBOutlet UILabel* frameskipLabel;
 
 	IBOutlet UISwitch* enableAudioOutput;
 
@@ -29,6 +33,7 @@
 
 - (IBAction)selectedGsHandler:(UIStoryboardSegue*)segue;
 - (IBAction)selectedResolutionFactor:(UIStoryboardSegue*)segue;
+- (IBAction)selectedFrameskip:(UIStoryboardSegue*)segue;
 - (IBAction)startFullDeviceScan;
 - (IBAction)returnToParent;
 

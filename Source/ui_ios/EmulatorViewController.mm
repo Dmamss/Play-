@@ -5,6 +5,7 @@
 #import "RenderView.h"
 #include "../PS2VM.h"
 #include "../PS2VM_Preferences.h"
+#include "../gs/GSHandler.h"
 #include "AppConfig.h"
 #include "PreferenceDefs.h"
 #include "GSH_OpenGLiOS.h"
@@ -33,10 +34,17 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_UI_SHOWFPS, false);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_UI_SHOWVIRTUALPAD, true);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_AUDIO_ENABLEOUTPUT, true);
+#ifdef HAS_GSH_VULKAN
+	CAppConfig::GetInstance().RegisterPreferenceInteger(PREFERENCE_VIDEO_GS_HANDLER, PREFERENCE_VALUE_VIDEO_GS_HANDLER_VULKAN);
+#else
 	CAppConfig::GetInstance().RegisterPreferenceInteger(PREFERENCE_VIDEO_GS_HANDLER, PREFERENCE_VALUE_VIDEO_GS_HANDLER_OPENGL);
+#endif
 	CAppConfig::GetInstance().RegisterPreferenceInteger(PREFERENCE_UI_VIRTUALPADOPACITY, 100);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_UI_HIDEVIRTUALPAD_CONTROLLER_CONNECTED, true);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_UI_VIRTUALPAD_HAPTICFEEDBACK, true);
+
+	CAppConfig::GetInstance().RegisterPreferenceInteger(PREFERENCE_PS2_FRAMESKIP, 0);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_CGSHANDLER_GS_RAM_READS_ENABLED, true);
 }
 
 - (void)viewDidLoad
@@ -464,6 +472,8 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 		  {
 			  gsHandler->NotifyPreferencesChanged();
 		  }
+		  g_virtualMachine->ReloadFrameRateLimit();
+		  g_virtualMachine->ReloadFrameSkip();
 		};
 	}
 }

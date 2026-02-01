@@ -2,7 +2,9 @@
 #import "SettingsListSelectorViewController.h"
 #include "AppConfig.h"
 #include "PreferenceDefs.h"
+#include "../gs/GSHandler.h"
 #include "../gs/GSH_OpenGL/GSH_OpenGL.h"
+#include "../PS2VM_Preferences.h"
 
 @implementation SettingsViewController
 
@@ -17,7 +19,7 @@
 		[gsHandlerName setText:@"OpenGL"];
 		break;
 	case PREFERENCE_VALUE_VIDEO_GS_HANDLER_VULKAN:
-		[gsHandlerName setText:@"Vulkan"];
+		[gsHandlerName setText:@"Vulkan (Metal)"];
 		break;
 	}
 }
@@ -26,6 +28,15 @@
 {
 	int factor = CAppConfig::GetInstance().GetPreferenceInteger(PREF_CGSH_OPENGL_RESOLUTION_FACTOR);
 	[resolutionFactor setText:[NSString stringWithFormat:@"%dx", factor]];
+}
+
+- (void)updateFrameskipLabel
+{
+	int skip = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_PS2_FRAMESKIP);
+	if(skip <= 0)
+		[frameskipLabel setText:@"Off"];
+	else
+		[frameskipLabel setText:[NSString stringWithFormat:@"%d", skip]];
 }
 
 - (void)viewDidLoad
@@ -40,6 +51,10 @@
 	[self updateResolutionFactorLabel];
 	[resizeOutputToWidescreen setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREF_CGSHANDLER_WIDESCREEN)];
 	[forceBilinearFiltering setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREF_CGSH_OPENGL_FORCEBILINEARTEXTURES)];
+	[gsRamReadsSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREF_CGSHANDLER_GS_RAM_READS_ENABLED)];
+
+	[limitFrameRateSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREF_PS2_LIMIT_FRAMERATE)];
+	[self updateFrameskipLabel];
 
 	[enableAudioOutput setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_AUDIO_ENABLEOUTPUT)];
 
@@ -60,6 +75,9 @@
 
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREF_CGSHANDLER_WIDESCREEN, resizeOutputToWidescreen.isOn);
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREF_CGSH_OPENGL_FORCEBILINEARTEXTURES, forceBilinearFiltering.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREF_CGSHANDLER_GS_RAM_READS_ENABLED, gsRamReadsSwitch.isOn);
+
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREF_PS2_LIMIT_FRAMERATE, limitFrameRateSwitch.isOn);
 
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_AUDIO_ENABLEOUTPUT, enableAudioOutput.isOn);
 
@@ -104,6 +122,11 @@
 		SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.destinationViewController;
 		selector.value = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_VIDEO_GS_HANDLER);
 	}
+	else if([segue.identifier isEqualToString:@"showFrameskipSelector"])
+	{
+		SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.destinationViewController;
+		selector.value = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_PS2_FRAMESKIP);
+	}
 }
 
 - (IBAction)selectedGsHandler:(UIStoryboardSegue*)segue
@@ -119,6 +142,13 @@
 	int factor = 1 << selector.value;
 	CAppConfig::GetInstance().SetPreferenceInteger(PREF_CGSH_OPENGL_RESOLUTION_FACTOR, factor);
 	[self updateResolutionFactorLabel];
+}
+
+- (IBAction)selectedFrameskip:(UIStoryboardSegue*)segue
+{
+	SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.sourceViewController;
+	CAppConfig::GetInstance().SetPreferenceInteger(PREFERENCE_PS2_FRAMESKIP, selector.value);
+	[self updateFrameskipLabel];
 }
 
 - (IBAction)startFullDeviceScan

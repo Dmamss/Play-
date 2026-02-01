@@ -4,8 +4,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface JITInitializer : NSObject
 
-/// Initializes the CodeGen JIT system with the appropriate mode based on iOS version and device capabilities
+/// Detects the appropriate JIT mode and configures CodeGen (does NOT allocate memory yet)
 + (void)initializeJITSystem;
+
+/// Allocates the executable memory region (call AFTER StikDebug has attached for LuckTXM mode)
++ (void)allocateExecutableMemoryIfNeeded;
 
 @end
 

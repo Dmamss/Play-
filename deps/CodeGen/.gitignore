@@ -1,0 +1,28 @@
+Debug
+Release
+.gradle
+.idea
+*.iml
+build_android/.*
+build_android/build
+build_android/local.properties
+build_android/proguard-project.txt
+build_cmake/build*
+build_ios/build
+build_uwp/Generated Files
+build_uwp/ipch
+build_win32/.vs
+*.user
+*.userprops
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.suo
+*.xccheckout
+*.xcscmblueprint
+xcuserdata
+
+# js/npm
+node_modules
+js/out

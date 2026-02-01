@@ -9,12 +9,18 @@
 #import "CoverViewCell.h"
 #import "AltServerJitService.h"
 #import "StikDebugJitService.h"
+#import "JITInitializer.h"
 
 static bool IsJitAvailable()
 {
 	//If ppid != 1, it means we're being run in the debugger
 	if(getppid() != 1) return true;
 	if([[AltServerJitService sharedAltServerJitService] jitEnabled])
+	{
+		return true;
+	}
+	// Check StikDebug JIT (iOS 26+)
+	if([[StikDebugJitService sharedService] isJitActive])
 	{
 		return true;
 	}
@@ -128,16 +134,16 @@ static NSString* const reuseIdentifier = @"coverCell";
 {
 	[super viewDidAppear:animated];
 
-	// ========== AJOUT JIT iOS 26 ==========
 	StikDebugJitService* jitService = [StikDebugJitService sharedService];
-
-	if([jitService needsActivation])
+	if([jitService isJitActive])
+	{
+		// Debugger already attached (e.g. from previous StikDebug session) — allocate now
+		[JITInitializer allocateExecutableMemoryIfNeeded];
+	}
+	else if([jitService needsActivation])
 	{
 		[self showJITActivationAlert];
 	}
-	// ========== FIN AJOUT JIT iOS 26 ==========
-
-	// ... reste du code existant ...
 }
 - (void)viewDidUnload
 {
@@ -177,7 +183,8 @@ static NSString* const reuseIdentifier = @"coverCell";
 				                                                   dispatch_async(dispatch_get_main_queue(), ^{
 					                                                 if(success)
 					                                                 {
-						                                                 // JIT activated - user can now play games
+						                                                 // JIT activated — allocate executable memory now that debugger is attached
+						                                                 [JITInitializer allocateExecutableMemoryIfNeeded];
 						                                                 UIAlertController* successAlert = [UIAlertController
 						                                                     alertControllerWithTitle:@"JIT Active"
 						                                                                      message:@"JIT has been activated. You can now play PS2 games!"
