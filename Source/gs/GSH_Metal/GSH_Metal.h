@@ -1,8 +1,7 @@
 #pragma once
 
 #include "../GSHandler.h"
-#include "../GsCachedArea.h"
-#include "../GsTextureCache.h"
+#include "../GsPixelFormats.h"
 
 #ifdef __OBJC__
 #import <Metal/Metal.h>
@@ -63,9 +62,12 @@ protected:
 	id<MTLRenderPipelineState> m_presentPipeline;
 
 	// Depth/stencil states
-	id<MTLDepthStencilState> m_depthLessEqual;
-	id<MTLDepthStencilState> m_depthAlways;
-	id<MTLDepthStencilState> m_depthDisabled;
+	id<MTLDepthStencilState> m_depthStateNever;
+	id<MTLDepthStencilState> m_depthStateAlways;
+	id<MTLDepthStencilState> m_depthStateGEqual;
+	id<MTLDepthStencilState> m_depthStateGreater;
+	id<MTLDepthStencilState> m_depthDisabledWrite;
+	id<MTLDepthStencilState> m_depthDisabledNoWrite;
 
 	// Sampler states
 	id<MTLSamplerState> m_samplerNearest;
@@ -74,14 +76,13 @@ protected:
 	// GS memory buffer (4MB)
 	id<MTLBuffer> m_gsMemoryBuffer;
 
-	// CLUT buffer
+	// CLUT buffer (256 entries * 4 bytes per cache slot)
 	id<MTLBuffer> m_clutBuffer;
 
-	// Swizzle table textures
-	id<MTLTexture> m_swizzleTablePSMCT32;
-	id<MTLTexture> m_swizzleTablePSMCT16;
-	id<MTLTexture> m_swizzleTablePSMT8;
-	id<MTLTexture> m_swizzleTablePSMT4;
+	// Swizzle table buffers
+	id<MTLBuffer> m_swizzleTablePSMCT32;
+	id<MTLBuffer> m_swizzleTablePSMCT16;
+	id<MTLBuffer> m_swizzleTablePSMT8;
 
 	// Present textures (render targets for the two display layers)
 	id<MTLTexture> m_presentColorTexture;
@@ -89,6 +90,9 @@ protected:
 
 	// Vertex buffer for primitives
 	id<MTLBuffer> m_vertexBuffer;
+
+	// Uniform buffer for draw calls
+	id<MTLBuffer> m_drawUniformBuffer;
 
 	// Current drawable
 	id<CAMetalDrawable> m_currentDrawable;
@@ -102,9 +106,12 @@ protected:
 	void* m_drawPipelineFlat;
 	void* m_drawPipelineTextured;
 	void* m_presentPipeline;
-	void* m_depthLessEqual;
-	void* m_depthAlways;
-	void* m_depthDisabled;
+	void* m_depthStateNever;
+	void* m_depthStateAlways;
+	void* m_depthStateGEqual;
+	void* m_depthStateGreater;
+	void* m_depthDisabledWrite;
+	void* m_depthDisabledNoWrite;
 	void* m_samplerNearest;
 	void* m_samplerBilinear;
 	void* m_gsMemoryBuffer;
@@ -112,10 +119,10 @@ protected:
 	void* m_swizzleTablePSMCT32;
 	void* m_swizzleTablePSMCT16;
 	void* m_swizzleTablePSMT8;
-	void* m_swizzleTablePSMT4;
 	void* m_presentColorTexture;
 	void* m_presentDepthTexture;
 	void* m_vertexBuffer;
+	void* m_drawUniformBuffer;
 	void* m_currentDrawable;
 	void* m_metalLayer;
 #endif
@@ -125,9 +132,10 @@ private:
 	struct MetalVertex
 	{
 		float position[4]; // x, y, z, w
-		float texcoord[2]; // s, t
+		float texcoord[2]; // u, v
 		float color[4];    // r, g, b, a
 		float fog;
+		float padding;
 	};
 
 	enum
@@ -166,10 +174,15 @@ private:
 	void Prim_Triangle();
 	void Prim_Sprite();
 
+	void EmitVertex(const VERTEX& vtx, float screenW, float screenH);
+
 	void FlushVertices();
 	void DoPresent(const DISPLAY_INFO&);
 
 	void UploadGSMemory();
+
+	CLUTKEY MakeCachedClutKey(const TEX0&) const;
+	int32 FindCachedClut(const CLUTKEY&) const;
 
 	// Draw context
 	VERTEX m_vtxBuffer[3];
@@ -179,15 +192,23 @@ private:
 	uint32 m_primitiveType = 0;
 	PRMODE m_primitiveMode;
 	uint32 m_fbBasePtr = 0;
+	uint32 m_fbWidth = 0;
 	float m_primOfsX = 0;
 	float m_primOfsY = 0;
+	uint32 m_texBasePtr = 0;
+	uint32 m_texBufWidth = 0;
 	uint32 m_texWidth = 0;
 	uint32 m_texHeight = 0;
+	uint32 m_texPsm = 0;
+	uint32 m_texCLUTPtr = 0;
+	uint32 m_texCLUTPsm = 0;
+	uint32 m_texFunction = 0;
 	std::vector<uint8> m_xferBuffer;
 
 	// Vertex accumulation
 	MetalVertex* m_mappedVertices = nullptr;
 	uint32 m_currentVertex = 0;
+	bool m_drawIsTextured = false;
 
 	// Memory cache
 	uint8* m_memoryCache = nullptr;
@@ -195,6 +216,35 @@ private:
 	// Presentation
 	uint32 m_presentWidth = 0;
 	uint32 m_presentHeight = 0;
+
+	// Rendering state from GS registers
+	uint32 m_depthTestMethod = DEPTH_TEST_ALWAYS;
+	bool m_depthWriteEnabled = true;
+	bool m_depthEnabled = false;
+	uint32 m_alphaTestMethod = ALPHA_TEST_ALWAYS;
+	uint32 m_alphaTestRef = 0;
+	uint32 m_alphaTestFail = ALPHA_TEST_FAIL_KEEP;
+	bool m_alphaTestEnabled = false;
+	uint32 m_scissorLeft = 0;
+	uint32 m_scissorTop = 0;
+	uint32 m_scissorRight = 0;
+	uint32 m_scissorBottom = 0;
+
+	// Alpha blending
+	uint32 m_alphaA = 0;
+	uint32 m_alphaB = 0;
+	uint32 m_alphaC = 0;
+	uint32 m_alphaD = 0;
+	uint32 m_alphaFix = 0;
+
+	// Fog
+	float m_fogR = 0;
+	float m_fogG = 0;
+	float m_fogB = 0;
+
+	// Screen dimensions (from display register)
+	float m_screenWidth = 640.0f;
+	float m_screenHeight = 448.0f;
 
 	bool m_depthTestingEnabled = true;
 	bool m_alphaBlendingEnabled = true;
