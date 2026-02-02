@@ -102,8 +102,8 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 	if(![JITInitializer isReady])
 	{
 		UIAlertController* jitAlert = [UIAlertController alertControllerWithTitle:@"Preparing JIT"
-		                                                                 message:@"Allocating executable memory..."
-		                                                          preferredStyle:UIAlertControllerStyleAlert];
+		                                                                  message:@"Allocating executable memory..."
+		                                                           preferredStyle:UIAlertControllerStyleAlert];
 
 		UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc]
 		    initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
@@ -122,9 +122,9 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 
 		  dispatch_async(dispatch_get_main_queue(), ^{
 			[jitAlert dismissViewControllerAnimated:YES
-			                            completion:^{
-				                          [self startEmulation];
-			                            }];
+				                         completion:^{
+					                       [self startEmulation];
+				                         }];
 		  });
 		});
 		return;
