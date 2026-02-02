@@ -58,6 +58,28 @@
 		[frameskipLabel setText:[NSString stringWithFormat:@"%d", skip]];
 }
 
+- (void)updateEeCycleRateLabel
+{
+	int rate = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_PS2_EE_CYCLERATE);
+	switch(rate)
+	{
+	default:
+		[[fallthrough]];
+	case PREFERENCE_PS2_EE_CYCLERATE_100:
+		[eeCycleRateLabel setText:@"100% (Default)"];
+		break;
+	case PREFERENCE_PS2_EE_CYCLERATE_125:
+		[eeCycleRateLabel setText:@"125%"];
+		break;
+	case PREFERENCE_PS2_EE_CYCLERATE_150:
+		[eeCycleRateLabel setText:@"150%"];
+		break;
+	case PREFERENCE_PS2_EE_CYCLERATE_200:
+		[eeCycleRateLabel setText:@"200%"];
+		break;
+	}
+}
+
 - (void)viewDidLoad
 {
 	[showFpsSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_UI_SHOWFPS)];
@@ -81,6 +103,15 @@
 	[efbAccessSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS)];
 	[textureCacheSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE)];
 	[gpuSyncSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC)];
+
+	[self updateEeCycleRateLabel];
+	[recompilerSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_EMU_RECOMPILER)];
+	[gsCopiesTextureSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_GS_COPIES_TO_TEXTURE)];
+	[ignoreFormatChangesSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_IGNORE_FORMAT_CHANGES)];
+	[gpuTextureDecodeSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_GPU_TEXTURE_DECODE)];
+	[fastDepthSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_FAST_DEPTH)];
+	[immediatePresentSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_IMMEDIATE_PRESENT)];
+	[asyncShadersSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_ASYNC_SHADERS)];
 
 	[enableAltServerJIT setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_ALTSTORE_JIT_ENABLED)];
 
@@ -108,6 +139,14 @@
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS, efbAccessSwitch.isOn);
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE, textureCacheSwitch.isOn);
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC, gpuSyncSwitch.isOn);
+
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_EMU_RECOMPILER, recompilerSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_GS_COPIES_TO_TEXTURE, gsCopiesTextureSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_IGNORE_FORMAT_CHANGES, ignoreFormatChangesSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_GPU_TEXTURE_DECODE, gpuTextureDecodeSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_FAST_DEPTH, fastDepthSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_IMMEDIATE_PRESENT, immediatePresentSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_ASYNC_SHADERS, asyncShadersSwitch.isOn);
 
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_ALTSTORE_JIT_ENABLED, enableAltServerJIT.isOn);
 
@@ -156,6 +195,11 @@
 		SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.destinationViewController;
 		selector.value = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_AUDIO_HANDLER);
 	}
+	else if([segue.identifier isEqualToString:@"showEeCycleRateSelector"])
+	{
+		SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.destinationViewController;
+		selector.value = CAppConfig::GetInstance().GetPreferenceInteger(PREFERENCE_PS2_EE_CYCLERATE);
+	}
 }
 
 - (IBAction)selectedGsHandler:(UIStoryboardSegue*)segue
@@ -185,6 +229,13 @@
 	SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.sourceViewController;
 	CAppConfig::GetInstance().SetPreferenceInteger(PREFERENCE_AUDIO_HANDLER, selector.value);
 	[self updateAudioHandlerNameLabel];
+}
+
+- (IBAction)selectedEeCycleRate:(UIStoryboardSegue*)segue
+{
+	SettingsListSelectorViewController* selector = (SettingsListSelectorViewController*)segue.sourceViewController;
+	CAppConfig::GetInstance().SetPreferenceInteger(PREFERENCE_PS2_EE_CYCLERATE, selector.value);
+	[self updateEeCycleRateLabel];
 }
 
 - (IBAction)startFullDeviceScan

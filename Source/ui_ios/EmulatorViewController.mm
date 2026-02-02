@@ -58,6 +58,16 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS, true);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE, true);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC, false);
+
+	// Advanced emulation options
+	CAppConfig::GetInstance().RegisterPreferenceInteger(PREFERENCE_PS2_EE_CYCLERATE, PREFERENCE_PS2_EE_CYCLERATE_100);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_EMU_RECOMPILER, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_GS_COPIES_TO_TEXTURE, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_IGNORE_FORMAT_CHANGES, false);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_GPU_TEXTURE_DECODE, false);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_FAST_DEPTH, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_IMMEDIATE_PRESENT, false);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_ASYNC_SHADERS, true);
 }
 
 - (void)viewDidLoad
