@@ -6,6 +6,7 @@
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <dispatch/dispatch.h>
 #else
 typedef void* id;
 #endif
@@ -82,7 +83,7 @@ protected:
 	id<MTLBuffer> m_swizzleTablePSMCT16;
 	id<MTLBuffer> m_swizzleTablePSMT8;
 
-	// Present textures (render targets for the two display layers)
+	// Present textures (render targets)
 	id<MTLTexture> m_presentColorTexture;
 	id<MTLTexture> m_presentDepthTexture;
 
@@ -97,6 +98,13 @@ protected:
 
 	// Presentation params
 	CAMetalLayer* m_metalLayer;
+
+	// Frame-level command buffer and render encoder (1 per frame, not per draw)
+	id<MTLCommandBuffer> m_frameCommandBuffer;
+	id<MTLRenderCommandEncoder> m_frameRenderEncoder;
+
+	// Triple-buffering semaphore
+	dispatch_semaphore_t m_inflightSemaphore;
 #else
 	void* m_device;
 	void* m_commandQueue;
@@ -123,6 +131,9 @@ protected:
 	void* m_drawUniformBuffer;
 	void* m_currentDrawable;
 	void* m_metalLayer;
+	void* m_frameCommandBuffer;
+	void* m_frameRenderEncoder;
+	void* m_inflightSemaphore;
 #endif
 
 private:
@@ -142,6 +153,7 @@ private:
 		CLUT_CACHE_SIZE = 32,
 		GS_RAM_SIZE = 0x00400000, // 4MB
 		VERTEX_BUFFER_SIZE = MAX_VERTICES * sizeof(MetalVertex),
+		MAX_INFLIGHT_FRAMES = 3,
 	};
 
 	struct CLUTKEY
@@ -178,6 +190,11 @@ private:
 	void DoPresent(const DISPLAY_INFO&);
 
 	void UploadGSMemory();
+
+	// Frame-level encoder management
+	void EnsureFrameCommandBuffer();
+	void EnsureFrameRenderEncoder();
+	void EndFrameRenderEncoder();
 
 	CLUTKEY MakeCachedClutKey(const TEX0&) const;
 	int32 FindCachedClut(const CLUTKEY&) const;
@@ -242,6 +259,10 @@ private:
 	// Screen dimensions (from display register)
 	float m_screenWidth = 640.0f;
 	float m_screenHeight = 448.0f;
+
+	// Frame tracking
+	bool m_frameClearedThisFrame = false;
+	bool m_gsMemoryDirty = true;
 
 	CLUTKEY m_clutStates[CLUT_CACHE_SIZE];
 	uint32 m_nextClutCacheIndex = 0;

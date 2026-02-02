@@ -63,6 +63,9 @@ CGSH_Metal::CGSH_Metal()
     , m_drawUniformBuffer(nil)
     , m_currentDrawable(nil)
     , m_metalLayer(nil)
+    , m_frameCommandBuffer(nil)
+    , m_frameRenderEncoder(nil)
+    , m_inflightSemaphore(nil)
 {
 	memset(&m_clutStates, 0, sizeof(m_clutStates));
 	memset(&m_primitiveMode, 0, sizeof(m_primitiveMode));
@@ -89,13 +92,21 @@ void CGSH_Metal::InitializeImpl()
 	CreateDepthStencilStates();
 	CreateSamplerStates();
 
+	m_inflightSemaphore = dispatch_semaphore_create(MAX_INFLIGHT_FRAMES);
+
 	m_memoryCache = new uint8[GS_RAM_SIZE];
 	memset(m_memoryCache, 0, GS_RAM_SIZE);
 }
 
 void CGSH_Metal::ReleaseImpl()
 {
-	FlushVertices();
+	EndFrameRenderEncoder();
+	if(m_frameCommandBuffer)
+	{
+		[m_frameCommandBuffer commit];
+		[m_frameCommandBuffer waitUntilCompleted];
+		m_frameCommandBuffer = nil;
+	}
 
 	m_drawPipelineFlat = nil;
 	m_drawPipelineTextured = nil;
@@ -128,12 +139,22 @@ void CGSH_Metal::ReleaseImpl()
 
 void CGSH_Metal::ResetImpl()
 {
+	EndFrameRenderEncoder();
+	if(m_frameCommandBuffer)
+	{
+		[m_frameCommandBuffer commit];
+		[m_frameCommandBuffer waitUntilCompleted];
+		m_frameCommandBuffer = nil;
+	}
+
 	m_vtxCount = 0;
 	m_pendingPrim = false;
 	m_currentVertex = 0;
 	m_nextClutCacheIndex = 0;
 	m_drawIsTextured = false;
 	m_primitiveType = PRIM_INVALID;
+	m_frameClearedThisFrame = false;
+	m_gsMemoryDirty = true;
 
 	memset(&m_clutStates, 0, sizeof(m_clutStates));
 	memset(&m_primitiveMode, 0, sizeof(m_primitiveMode));
@@ -276,78 +297,59 @@ struct DrawUniforms {
 };
 
 // ============================================================
-// Swizzle helper: PSMCT32 address computation
-// Given a pixel coordinate (x, y), buffer pointer and buffer width,
-// compute the byte offset in GS RAM using the page offset table.
+// Swizzle helpers
 // ============================================================
 uint computeAddressPSMCT32(int x, int y, uint bufPtr, uint bufWidth,
                            constant uint* swizzleTable) {
-    // PSMCT32: page = 64x32, 8192 bytes per page
     const uint pageWidth = 64;
     const uint pageHeight = 32;
     const uint pageSize = 8192;
-
-    uint pagesPerRow = bufWidth / pageWidth;
-    uint pageX = x / pageWidth;
-    uint pageY = y / pageHeight;
-    uint page = pageY * pagesPerRow + pageX;
-
-    uint localX = x % pageWidth;
-    uint localY = y % pageHeight;
-
-    uint pageOffset = swizzleTable[localY * pageWidth + localX];
-    uint address = bufPtr + page * pageSize + pageOffset;
-    return address & 0x003FFFFF; // wrap to 4MB
-}
-
-// ============================================================
-// Swizzle helper: PSMCT16 address computation
-// ============================================================
-uint computeAddressPSMCT16(int x, int y, uint bufPtr, uint bufWidth,
-                            constant uint* swizzleTable) {
-    const uint pageWidth = 64;
-    const uint pageHeight = 64;
-    const uint pageSize = 8192;
-
-    uint pagesPerRow = bufWidth / pageWidth;
-    uint pageX = x / pageWidth;
-    uint pageY = y / pageHeight;
-    uint page = pageY * pagesPerRow + pageX;
-
-    uint localX = x % pageWidth;
-    uint localY = y % pageHeight;
-
-    uint pageOffset = swizzleTable[localY * pageWidth + localX];
-    uint address = bufPtr + page * pageSize + pageOffset;
-    return address & 0x003FFFFF;
-}
-
-// ============================================================
-// Swizzle helper: PSMT8 address computation
-// ============================================================
-uint computeAddressPSMT8(int x, int y, uint bufPtr, uint bufWidth,
-                          constant uint* swizzleTable) {
-    const uint pageWidth = 128;
-    const uint pageHeight = 64;
-    const uint pageSize = 8192;
-
     uint pagesPerRow = bufWidth / pageWidth;
     if(pagesPerRow == 0) pagesPerRow = 1;
     uint pageX = x / pageWidth;
     uint pageY = y / pageHeight;
     uint page = pageY * pagesPerRow + pageX;
-
     uint localX = x % pageWidth;
     uint localY = y % pageHeight;
-
     uint pageOffset = swizzleTable[localY * pageWidth + localX];
     uint address = bufPtr + page * pageSize + pageOffset;
     return address & 0x003FFFFF;
 }
 
-// ============================================================
-// Read a 32-bit pixel from GS memory (as uint words)
-// ============================================================
+uint computeAddressPSMCT16(int x, int y, uint bufPtr, uint bufWidth,
+                            constant uint* swizzleTable) {
+    const uint pageWidth = 64;
+    const uint pageHeight = 64;
+    const uint pageSize = 8192;
+    uint pagesPerRow = bufWidth / pageWidth;
+    if(pagesPerRow == 0) pagesPerRow = 1;
+    uint pageX = x / pageWidth;
+    uint pageY = y / pageHeight;
+    uint page = pageY * pagesPerRow + pageX;
+    uint localX = x % pageWidth;
+    uint localY = y % pageHeight;
+    uint pageOffset = swizzleTable[localY * pageWidth + localX];
+    uint address = bufPtr + page * pageSize + pageOffset;
+    return address & 0x003FFFFF;
+}
+
+uint computeAddressPSMT8(int x, int y, uint bufPtr, uint bufWidth,
+                          constant uint* swizzleTable) {
+    const uint pageWidth = 128;
+    const uint pageHeight = 64;
+    const uint pageSize = 8192;
+    uint pagesPerRow = bufWidth / pageWidth;
+    if(pagesPerRow == 0) pagesPerRow = 1;
+    uint pageX = x / pageWidth;
+    uint pageY = y / pageHeight;
+    uint page = pageY * pagesPerRow + pageX;
+    uint localX = x % pageWidth;
+    uint localY = y % pageHeight;
+    uint pageOffset = swizzleTable[localY * pageWidth + localX];
+    uint address = bufPtr + page * pageSize + pageOffset;
+    return address & 0x003FFFFF;
+}
+
 uint readPixelPSMCT32(int x, int y, uint bufPtr, uint bufWidth,
                        constant uint* gsMemory, constant uint* swizzleTable) {
     uint addr = computeAddressPSMCT32(x, y, bufPtr, bufWidth, swizzleTable);
@@ -356,9 +358,6 @@ uint readPixelPSMCT32(int x, int y, uint bufPtr, uint bufWidth,
     return gsMemory[wordAddr];
 }
 
-// ============================================================
-// Read a 16-bit pixel from GS memory
-// ============================================================
 uint readPixelPSMCT16(int x, int y, uint bufPtr, uint bufWidth,
                        constant uchar* gsMemoryBytes, constant uint* swizzleTable) {
     uint addr = computeAddressPSMCT16(x, y, bufPtr, bufWidth, swizzleTable);
@@ -366,9 +365,6 @@ uint readPixelPSMCT16(int x, int y, uint bufPtr, uint bufWidth,
     return uint(gsMemoryBytes[addr]) | (uint(gsMemoryBytes[addr + 1]) << 8);
 }
 
-// ============================================================
-// Read an 8-bit index from GS memory (PSMT8)
-// ============================================================
 uint readPixelPSMT8(int x, int y, uint bufPtr, uint bufWidth,
                      constant uchar* gsMemoryBytes, constant uint* swizzleTable) {
     uint addr = computeAddressPSMT8(x, y, bufPtr, bufWidth, swizzleTable);
@@ -376,21 +372,15 @@ uint readPixelPSMT8(int x, int y, uint bufPtr, uint bufWidth,
     return uint(gsMemoryBytes[addr]);
 }
 
-// ============================================================
-// Convert a packed RGBA32 word to float4
-// ============================================================
 float4 unpackColor32(uint pixel) {
     float4 c;
     c.r = float((pixel >>  0) & 0xFF) / 255.0;
     c.g = float((pixel >>  8) & 0xFF) / 255.0;
     c.b = float((pixel >> 16) & 0xFF) / 255.0;
-    c.a = float((pixel >> 24) & 0xFF) / 128.0; // PS2 alpha is 0-128
+    c.a = float((pixel >> 24) & 0xFF) / 128.0;
     return c;
 }
 
-// ============================================================
-// Convert a 16-bit color to float4
-// ============================================================
 float4 unpackColor16(uint pixel) {
     float4 c;
     c.r = float(((pixel >>  0) & 0x1F)) / 31.0;
@@ -400,28 +390,24 @@ float4 unpackColor16(uint pixel) {
     return c;
 }
 
-// ============================================================
-// Alpha test
-// ============================================================
 bool alphaTest(float alphaValue, uint alphaFunc, uint alphaRef) {
     uint aRef = alphaRef;
     uint aVal = uint(clamp(alphaValue * 255.0, 0.0, 255.0));
-
     switch(alphaFunc) {
-        case 0: return false;               // NEVER
-        case 1: return true;                // ALWAYS
-        case 2: return aVal < aRef;         // LESS
-        case 3: return aVal <= aRef;        // LEQUAL
-        case 4: return aVal == aRef;        // EQUAL
-        case 5: return aVal >= aRef;        // GEQUAL
-        case 6: return aVal > aRef;         // GREATER
-        case 7: return aVal != aRef;        // NOTEQUAL
+        case 0: return false;
+        case 1: return true;
+        case 2: return aVal < aRef;
+        case 3: return aVal <= aRef;
+        case 4: return aVal == aRef;
+        case 5: return aVal >= aRef;
+        case 6: return aVal > aRef;
+        case 7: return aVal != aRef;
         default: return true;
     }
 }
 
 // ============================================================
-// Vertex shader for drawing primitives
+// Draw vertex shader
 // ============================================================
 vertex VertexOut vs_draw(VertexIn in [[stage_in]]) {
     VertexOut out;
@@ -433,31 +419,25 @@ vertex VertexOut vs_draw(VertexIn in [[stage_in]]) {
 }
 
 // ============================================================
-// Fragment shader: flat (untextured) drawing
+// Fragment shader: flat (untextured)
 // ============================================================
 fragment float4 fs_draw_flat(VertexOut in [[stage_in]],
                               constant DrawUniforms& uniforms [[buffer(0)]]) {
     float4 color = in.color;
-
-    // Alpha test
     if(uniforms.alphaTestEnabled != 0) {
         if(!alphaTest(color.a, uniforms.alphaFunc, uniforms.alphaRef)) {
             discard_fragment();
         }
     }
-
-    // Fog
     if(uniforms.fogEnabled != 0) {
         float fogFactor = in.fog / 255.0;
         color.rgb = mix(uniforms.fogColor, color.rgb, fogFactor);
     }
-
     return color;
 }
 
 // ============================================================
-// Fragment shader: textured drawing
-// Supports PSMCT32, PSMCT16, PSMT8 (with CLUT), PSMT4 (with CLUT)
+// Fragment shader: textured
 // ============================================================
 fragment float4 fs_draw_textured(VertexOut in [[stage_in]],
                                   constant DrawUniforms& uniforms [[buffer(0)]],
@@ -472,35 +452,26 @@ fragment float4 fs_draw_textured(VertexOut in [[stage_in]],
 
     float4 texColor;
     constant uchar* gsMemBytes = reinterpret_cast<constant uchar*>(gsMemory);
-
     uint psm = uniforms.texPsm;
 
     if(psm == 0x00 || psm == 0x01) {
-        // PSMCT32 / PSMCT24
         uint pixel = readPixelPSMCT32(texCoord.x, texCoord.y,
                                        uniforms.texBasePtr, uniforms.texBufWidth,
                                        gsMemory, swizzleTableCT32);
         texColor = unpackColor32(pixel);
-        if(psm == 0x01) texColor.a = 1.0; // PSMCT24: no alpha
-    }
-    else if(psm == 0x02 || psm == 0x0A) {
-        // PSMCT16 / PSMCT16S
+        if(psm == 0x01) texColor.a = 1.0;
+    } else if(psm == 0x02 || psm == 0x0A) {
         uint pixel = readPixelPSMCT16(texCoord.x, texCoord.y,
                                        uniforms.texBasePtr, uniforms.texBufWidth,
                                        gsMemBytes, swizzleTableCT16);
         texColor = unpackColor16(pixel);
-    }
-    else if(psm == 0x13) {
-        // PSMT8 - indexed, use CLUT
+    } else if(psm == 0x13) {
         uint index = readPixelPSMT8(texCoord.x, texCoord.y,
                                      uniforms.texBasePtr, uniforms.texBufWidth,
                                      gsMemBytes, swizzleTableT8);
         uint clutEntry = clutData[index & 0xFF];
         texColor = unpackColor32(clutEntry);
-    }
-    else if(psm == 0x14) {
-        // PSMT4 - 4-bit indexed, use CLUT
-        // Read as 8-bit and extract nibble
+    } else if(psm == 0x14) {
         uint index = readPixelPSMT8(texCoord.x / 2, texCoord.y,
                                      uniforms.texBasePtr, uniforms.texBufWidth,
                                      gsMemBytes, swizzleTableT8);
@@ -511,92 +482,67 @@ fragment float4 fs_draw_textured(VertexOut in [[stage_in]],
         }
         uint clutEntry = clutData[index];
         texColor = unpackColor32(clutEntry);
-    }
-    else if(psm == 0x1B) {
-        // PSMT8H - 8-bit index stored in high byte of 32-bit word
+    } else if(psm == 0x1B) {
         uint pixel = readPixelPSMCT32(texCoord.x, texCoord.y,
                                        uniforms.texBasePtr, uniforms.texBufWidth,
                                        gsMemory, swizzleTableCT32);
         uint index = (pixel >> 24) & 0xFF;
         uint clutEntry = clutData[index];
         texColor = unpackColor32(clutEntry);
-    }
-    else if(psm == 0x24) {
-        // PSMT4HL - 4-bit index in bits 24-27
+    } else if(psm == 0x24) {
         uint pixel = readPixelPSMCT32(texCoord.x, texCoord.y,
                                        uniforms.texBasePtr, uniforms.texBufWidth,
                                        gsMemory, swizzleTableCT32);
         uint index = (pixel >> 24) & 0x0F;
         uint clutEntry = clutData[index];
         texColor = unpackColor32(clutEntry);
-    }
-    else if(psm == 0x2C) {
-        // PSMT4HH - 4-bit index in bits 28-31
+    } else if(psm == 0x2C) {
         uint pixel = readPixelPSMCT32(texCoord.x, texCoord.y,
                                        uniforms.texBasePtr, uniforms.texBufWidth,
                                        gsMemory, swizzleTableCT32);
         uint index = (pixel >> 28) & 0x0F;
         uint clutEntry = clutData[index];
         texColor = unpackColor32(clutEntry);
-    }
-    else {
-        // Fallback: direct linear read as PSMCT32
+    } else {
         uint addr = (uniforms.texBasePtr + (texCoord.y * uniforms.texBufWidth + texCoord.x) * 4) / 4;
         if(addr < 1048576) {
             texColor = unpackColor32(gsMemory[addr]);
         } else {
-            texColor = float4(1, 0, 1, 1); // magenta = unhandled format
+            texColor = float4(1, 0, 1, 1);
         }
     }
 
-    // Texture function application
     float4 color;
     uint texFunc = uniforms.texFunction;
     if(texFunc == 0) {
-        // MODULATE
         color = texColor * in.color;
     } else if(texFunc == 1) {
-        // DECAL
         color = texColor;
     } else if(texFunc == 2) {
-        // HIGHLIGHT
         color.rgb = texColor.rgb * in.color.rgb + in.color.aaa;
         color.a = texColor.a + in.color.a;
     } else if(texFunc == 3) {
-        // HIGHLIGHT2
         color.rgb = texColor.rgb * in.color.rgb + in.color.aaa;
         color.a = texColor.a;
     } else {
         color = texColor * in.color;
     }
 
-    // Alpha test
     if(uniforms.alphaTestEnabled != 0) {
         if(!alphaTest(color.a, uniforms.alphaFunc, uniforms.alphaRef)) {
             discard_fragment();
         }
     }
-
-    // Fog
     if(uniforms.fogEnabled != 0) {
         float fogFactor = in.fog / 255.0;
         color.rgb = mix(uniforms.fogColor, color.rgb, fogFactor);
     }
-
     return color;
 }
 
 // ============================================================
-// Present pass
+// Present pass - simple texture blit (samples m_presentColorTexture)
 // ============================================================
-struct PresentUniforms {
-    float2 srcSize;
-    float2 dstSize;
-    uint fbPtr;
-    uint fbWidth;
-    uint fbPsm;
-};
-
 struct PresentVertexOut {
     float4 position [[position]];
     float2 texcoord;
@@ -615,7 +561,6 @@ vertex PresentVertexOut vs_present(uint vertexId [[vertex_id]]) {
         float2(0, 0),
         float2(1, 0)
     };
-
     PresentVertexOut out;
     out.position = float4(positions[vertexId], 0, 1);
     out.texcoord = texcoords[vertexId];
@@ -623,43 +568,9 @@ vertex PresentVertexOut vs_present(uint vertexId [[vertex_id]]) {
 }
 
 fragment float4 fs_present(PresentVertexOut in [[stage_in]],
-                           constant PresentUniforms& uniforms [[buffer(0)]],
-                           constant uint* gsMemory [[buffer(1)]],
-                           constant uint* swizzleTableCT32 [[buffer(2)]],
-                           constant uint* swizzleTableCT16 [[buffer(3)]]) {
-    int2 coord = int2(in.texcoord * uniforms.srcSize);
-    coord.x = clamp(coord.x, 0, int(uniforms.srcSize.x) - 1);
-    coord.y = clamp(coord.y, 0, int(uniforms.srcSize.y) - 1);
-
-    float4 color;
-
-    if(uniforms.fbPsm == 0 || uniforms.fbPsm == 1) {
-        // PSMCT32 / PSMCT24 with proper swizzle
-        uint pixel = readPixelPSMCT32(coord.x, coord.y, uniforms.fbPtr,
-                                       uniforms.fbWidth, gsMemory, swizzleTableCT32);
-        color.r = float((pixel >>  0) & 0xFF) / 255.0;
-        color.g = float((pixel >>  8) & 0xFF) / 255.0;
-        color.b = float((pixel >> 16) & 0xFF) / 255.0;
-        color.a = 1.0;
-    } else if(uniforms.fbPsm == 2 || uniforms.fbPsm == 0x0A) {
-        // PSMCT16 / PSMCT16S with proper swizzle
-        constant uchar* gsMemBytes = reinterpret_cast<constant uchar*>(gsMemory);
-        uint pixel = readPixelPSMCT16(coord.x, coord.y, uniforms.fbPtr,
-                                       uniforms.fbWidth, gsMemBytes, swizzleTableCT16);
-        color.r = float(((pixel >>  0) & 0x1F)) / 31.0;
-        color.g = float(((pixel >>  5) & 0x1F)) / 31.0;
-        color.b = float(((pixel >> 10) & 0x1F)) / 31.0;
-        color.a = 1.0;
-    } else {
-        // Fallback: treat as PSMCT32 with swizzle
-        uint pixel = readPixelPSMCT32(coord.x, coord.y, uniforms.fbPtr,
-                                       uniforms.fbWidth, gsMemory, swizzleTableCT32);
-        color.r = float((pixel >>  0) & 0xFF) / 255.0;
-        color.g = float((pixel >>  8) & 0xFF) / 255.0;
-        color.b = float((pixel >> 16) & 0xFF) / 255.0;
-        color.a = 1.0;
-    }
-    return color;
+                           texture2d<float> srcTexture [[texture(0)]],
+                           sampler s [[sampler(0)]]) {
+    return srcTexture.sample(s, in.texcoord);
 }
 )";
 
@@ -695,7 +606,7 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
 	vertexDesc.layouts[0].stepRate = 1;
 	vertexDesc.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
 
-	// Flat draw pipeline (alpha blending enabled by default)
+	// Flat draw pipeline
 	{
 		MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
 		desc.label = @"GSH_Metal Flat Draw";
@@ -709,7 +620,6 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
 		desc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
 		desc.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
 		desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
-
 		m_drawPipelineFlat = [m_device newRenderPipelineStateWithDescriptor:desc error:&error];
 		if(error) NSLog(@"[GSH_Metal] Draw flat pipeline error: %@", error);
 	}
@@ -728,19 +638,17 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
 		desc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
 		desc.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
 		desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
-
 		m_drawPipelineTextured = [m_device newRenderPipelineStateWithDescriptor:desc error:&error];
 		if(error) NSLog(@"[GSH_Metal] Draw textured pipeline error: %@", error);
 	}
 
-	// Present pipeline
+	// Present pipeline - samples a texture, no depth
 	{
 		MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
 		desc.label = @"GSH_Metal Present";
 		desc.vertexFunction = [m_library newFunctionWithName:@"vs_present"];
 		desc.fragmentFunction = [m_library newFunctionWithName:@"fs_present"];
 		desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-
 		m_presentPipeline = [m_device newRenderPipelineStateWithDescriptor:desc error:&error];
 		if(error) NSLog(@"[GSH_Metal] Present pipeline error: %@", error);
 	}
@@ -748,42 +656,36 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
 
 void CGSH_Metal::CreateDepthStencilStates()
 {
-	// NEVER - depth test never passes
 	{
 		MTLDepthStencilDescriptor* desc = [[MTLDepthStencilDescriptor alloc] init];
 		desc.depthCompareFunction = MTLCompareFunctionNever;
 		desc.depthWriteEnabled = NO;
 		m_depthStateNever = [m_device newDepthStencilStateWithDescriptor:desc];
 	}
-	// ALWAYS - depth test always passes, writes depth
 	{
 		MTLDepthStencilDescriptor* desc = [[MTLDepthStencilDescriptor alloc] init];
 		desc.depthCompareFunction = MTLCompareFunctionAlways;
 		desc.depthWriteEnabled = YES;
 		m_depthStateAlways = [m_device newDepthStencilStateWithDescriptor:desc];
 	}
-	// GEQUAL
 	{
 		MTLDepthStencilDescriptor* desc = [[MTLDepthStencilDescriptor alloc] init];
 		desc.depthCompareFunction = MTLCompareFunctionGreaterEqual;
 		desc.depthWriteEnabled = YES;
 		m_depthStateGEqual = [m_device newDepthStencilStateWithDescriptor:desc];
 	}
-	// GREATER
 	{
 		MTLDepthStencilDescriptor* desc = [[MTLDepthStencilDescriptor alloc] init];
 		desc.depthCompareFunction = MTLCompareFunctionGreater;
 		desc.depthWriteEnabled = YES;
 		m_depthStateGreater = [m_device newDepthStencilStateWithDescriptor:desc];
 	}
-	// Disabled with write
 	{
 		MTLDepthStencilDescriptor* desc = [[MTLDepthStencilDescriptor alloc] init];
 		desc.depthCompareFunction = MTLCompareFunctionAlways;
 		desc.depthWriteEnabled = YES;
 		m_depthDisabledWrite = [m_device newDepthStencilStateWithDescriptor:desc];
 	}
-	// Disabled no write
 	{
 		MTLDepthStencilDescriptor* desc = [[MTLDepthStencilDescriptor alloc] init];
 		desc.depthCompareFunction = MTLCompareFunctionAlways;
@@ -833,14 +735,86 @@ void CGSH_Metal::CreatePresentRenderTargets(uint32 width, uint32 height)
 	m_presentDepthTexture = [m_device newTextureWithDescriptor:depthDesc];
 }
 
+// ============================================================
+// Frame-level command buffer and render encoder management
+// Only 1 command buffer and 1 render encoder per frame.
+// ============================================================
+
+void CGSH_Metal::EnsureFrameCommandBuffer()
+{
+	if(m_frameCommandBuffer == nil)
+	{
+		m_frameCommandBuffer = [m_commandQueue commandBuffer];
+		m_frameCommandBuffer.label = @"GSH_Metal Frame";
+	}
+}
+
+void CGSH_Metal::EnsureFrameRenderEncoder()
+{
+	if(m_frameRenderEncoder != nil) return;
+
+	EnsureFrameCommandBuffer();
+
+	// Ensure render targets exist
+	if(m_presentColorTexture == nil)
+	{
+		uint32 w = m_presentWidth > 0 ? m_presentWidth : (uint32)m_screenWidth;
+		uint32 h = m_presentHeight > 0 ? m_presentHeight : (uint32)m_screenHeight;
+		if(w == 0) w = 640;
+		if(h == 0) h = 448;
+		CreatePresentRenderTargets(w, h);
+	}
+
+	if(m_presentColorTexture == nil) return;
+
+	// Upload GS memory once at the start of each encoder (for textured draws)
+	if(m_gsMemoryDirty)
+	{
+		UploadGSMemory();
+		m_gsMemoryDirty = false;
+	}
+
+	MTLRenderPassDescriptor* renderPass = [MTLRenderPassDescriptor renderPassDescriptor];
+	renderPass.colorAttachments[0].texture = m_presentColorTexture;
+	renderPass.colorAttachments[0].storeAction = MTLStoreActionStore;
+	renderPass.depthAttachment.texture = m_presentDepthTexture;
+	renderPass.depthAttachment.storeAction = MTLStoreActionStore;
+
+	// Clear on first use this frame, load on subsequent
+	if(!m_frameClearedThisFrame)
+	{
+		renderPass.colorAttachments[0].loadAction = MTLLoadActionClear;
+		renderPass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
+		renderPass.depthAttachment.loadAction = MTLLoadActionClear;
+		renderPass.depthAttachment.clearDepth = 0.0;
+		m_frameClearedThisFrame = true;
+	}
+	else
+	{
+		renderPass.colorAttachments[0].loadAction = MTLLoadActionLoad;
+		renderPass.depthAttachment.loadAction = MTLLoadActionLoad;
+	}
+
+	m_frameRenderEncoder = [m_frameCommandBuffer renderCommandEncoderWithDescriptor:renderPass];
+	m_frameRenderEncoder.label = @"GSH_Metal Draw";
+}
+
+void CGSH_Metal::EndFrameRenderEncoder()
+{
+	if(m_frameRenderEncoder != nil)
+	{
+		[m_frameRenderEncoder endEncoding];
+		m_frameRenderEncoder = nil;
+	}
+}
+
 void CGSH_Metal::MarkNewFrame()
 {
 	CGSHandler::MarkNewFrame();
 }
 
 // ============================================================
-// WriteRegisterImpl - Handle GS register writes
-// Follows the same pattern as the Vulkan backend
+// WriteRegisterImpl
 // ============================================================
 void CGSH_Metal::WriteRegisterImpl(uint8 registerId, uint64 data)
 {
@@ -862,8 +836,7 @@ void CGSH_Metal::WriteRegisterImpl(uint8 registerId, uint64 data)
 }
 
 // ============================================================
-// VertexKick - Accumulate vertices and trigger primitive drawing
-// Uses countdown approach matching Vulkan backend exactly
+// VertexKick
 // ============================================================
 void CGSH_Metal::VertexKick(uint8 registerId, uint64 data)
 {
@@ -954,13 +927,12 @@ void CGSH_Metal::VertexKick(uint8 registerId, uint64 data)
 }
 
 // ============================================================
-// ProcessPrim - Start a new primitive type
+// ProcessPrim
 // ============================================================
 void CGSH_Metal::ProcessPrim(uint64 data)
 {
 	auto prim = make_convertible<PRIM>(data);
 
-	// If changing prim type, we need to flush accumulated vertices
 	unsigned int newPrimType = prim.nType;
 	if(newPrimType != m_primitiveType && m_currentVertex > 0)
 	{
@@ -993,28 +965,24 @@ void CGSH_Metal::ProcessPrim(uint64 data)
 }
 
 // ============================================================
-// SetRenderingContext - Read state from GS registers
+// SetRenderingContext
 // ============================================================
 void CGSH_Metal::SetRenderingContext(uint64 primReg)
 {
 	auto prim = make_convertible<PRMODE>(primReg);
 	unsigned int context = prim.nContext;
 
-	// XY offset
 	auto offset = make_convertible<XYOFFSET>(m_nReg[GS_REG_XYOFFSET_1 + context]);
 	m_primOfsX = offset.GetX();
 	m_primOfsY = offset.GetY();
 
-	// Frame buffer
 	auto frame = make_convertible<FRAME>(m_nReg[GS_REG_FRAME_1 + context]);
 	m_fbBasePtr = frame.GetBasePtr();
 	m_fbWidth = frame.GetWidth();
 
-	// Depth buffer
 	auto zbuf = make_convertible<ZBUF>(m_nReg[GS_REG_ZBUF_1 + context]);
 	m_depthWriteEnabled = (zbuf.nMask == 0);
 
-	// Test register
 	auto test = make_convertible<TEST>(m_nReg[GS_REG_TEST_1 + context]);
 	m_depthEnabled = test.nDepthEnabled != 0;
 	m_depthTestMethod = test.nDepthMethod;
@@ -1023,7 +991,6 @@ void CGSH_Metal::SetRenderingContext(uint64 primReg)
 	m_alphaTestRef = test.nAlphaRef;
 	m_alphaTestFail = test.nAlphaFail;
 
-	// Alpha blending
 	auto alpha = make_convertible<ALPHA>(m_nReg[GS_REG_ALPHA_1 + context]);
 	m_alphaA = alpha.nA;
 	m_alphaB = alpha.nB;
@@ -1031,14 +998,12 @@ void CGSH_Metal::SetRenderingContext(uint64 primReg)
 	m_alphaD = alpha.nD;
 	m_alphaFix = alpha.nFix;
 
-	// Scissor
 	auto scissor = make_convertible<SCISSOR>(m_nReg[GS_REG_SCISSOR_1 + context]);
 	m_scissorLeft = scissor.scax0;
 	m_scissorTop = scissor.scay0;
 	m_scissorRight = scissor.scax1;
 	m_scissorBottom = scissor.scay1;
 
-	// Texture
 	if(prim.nTexture)
 	{
 		auto tex0 = make_convertible<TEX0>(m_nReg[GS_REG_TEX0_1 + context]);
@@ -1051,7 +1016,6 @@ void CGSH_Metal::SetRenderingContext(uint64 primReg)
 		m_texCLUTPsm = tex0.nCPSM;
 		m_texFunction = tex0.nFunction;
 
-		// Sync CLUT if needed for indexed textures
 		if(CGsPixelFormats::IsPsmIDTEX(m_texPsm))
 		{
 			SyncCLUT(tex0);
@@ -1064,7 +1028,6 @@ void CGSH_Metal::SetRenderingContext(uint64 primReg)
 		m_drawIsTextured = false;
 	}
 
-	// Fog color
 	auto fogCol = make_convertible<FOGCOL>(m_nReg[GS_REG_FOGCOL]);
 	m_fogR = (float)fogCol.nFCR / 255.0f;
 	m_fogG = (float)fogCol.nFCG / 255.0f;
@@ -1072,7 +1035,7 @@ void CGSH_Metal::SetRenderingContext(uint64 primReg)
 }
 
 // ============================================================
-// EmitVertex helper
+// EmitVertex
 // ============================================================
 void CGSH_Metal::EmitVertex(const VERTEX& vtx, float screenW, float screenH)
 {
@@ -1083,14 +1046,11 @@ void CGSH_Metal::EmitVertex(const VERTEX& vtx, float screenW, float screenH)
 
 	auto& mv = m_mappedVertices[m_currentVertex++];
 
-	// Decode position
-	bool isXYZF = false; // Position already decoded in VertexKick
 	auto xyz = make_convertible<XYZ>(vtx.position);
 	float posX = xyz.GetX() - m_primOfsX;
 	float posY = xyz.GetY() - m_primOfsY;
 	float posZ = (float)xyz.nZ / 4294967296.0f;
 
-	// Convert to NDC (-1..1)
 	float x = posX / screenW * 2.0f - 1.0f;
 	float y = -(posY / screenH * 2.0f - 1.0f);
 
@@ -1099,14 +1059,12 @@ void CGSH_Metal::EmitVertex(const VERTEX& vtx, float screenW, float screenH)
 	mv.position[2] = posZ;
 	mv.position[3] = 1.0f;
 
-	// Color
 	auto rgbaq = make_convertible<RGBAQ>(vtx.rgbaq);
 	mv.color[0] = (float)rgbaq.nR / 255.0f;
 	mv.color[1] = (float)rgbaq.nG / 255.0f;
 	mv.color[2] = (float)rgbaq.nB / 255.0f;
 	mv.color[3] = (float)rgbaq.nA / 128.0f;
 
-	// Texture coordinates
 	if(m_drawIsTextured)
 	{
 		if(m_primitiveMode.nUseUV)
@@ -1135,7 +1093,7 @@ void CGSH_Metal::EmitVertex(const VERTEX& vtx, float screenW, float screenH)
 }
 
 // ============================================================
-// Prim_Point - Render a point as a small degenerate triangle
+// Prim_Point
 // ============================================================
 void CGSH_Metal::Prim_Point()
 {
@@ -1143,12 +1101,10 @@ void CGSH_Metal::Prim_Point()
 	float screenW = m_screenWidth;
 	float screenH = m_screenHeight;
 
-	// Emit as a tiny triangle (3 vertices at same position)
 	EmitVertex(vtx, screenW, screenH);
 	EmitVertex(vtx, screenW, screenH);
 	EmitVertex(vtx, screenW, screenH);
 
-	// Nudge the last two vertices by a subpixel amount to avoid degenerate
 	if(m_currentVertex >= 3)
 	{
 		m_mappedVertices[m_currentVertex - 2].position[0] += 2.0f / screenW;
@@ -1157,7 +1113,7 @@ void CGSH_Metal::Prim_Point()
 }
 
 // ============================================================
-// Prim_Line - Render a line as a thin quad (2 triangles)
+// Prim_Line
 // ============================================================
 void CGSH_Metal::Prim_Line()
 {
@@ -1174,30 +1130,19 @@ void CGSH_Metal::Prim_Line()
 	float x1 = xyz1.GetX() - m_primOfsX;
 	float y1 = xyz1.GetY() - m_primOfsY;
 
-	// Compute a perpendicular offset for line width
 	float dx = x1 - x0;
 	float dy = y1 - y0;
 	float len = sqrtf(dx * dx + dy * dy);
 	if(len < 0.001f) len = 0.001f;
 
-	// Line half-width in pixels (minimum 0.5)
 	float hw = 0.5f;
 	float nx = -dy / len * hw;
 	float ny = dx / len * hw;
 
-	// Build 4 corners of the line quad
-	VERTEX corners[4];
-	memcpy(&corners[0], &vtx0, sizeof(VERTEX));
-	memcpy(&corners[1], &vtx0, sizeof(VERTEX));
-	memcpy(&corners[2], &vtx1, sizeof(VERTEX));
-	memcpy(&corners[3], &vtx1, sizeof(VERTEX));
-
-	// Emit two triangles: 0-1-2, 1-2-3
 	EmitVertex(vtx0, screenW, screenH);
 	EmitVertex(vtx0, screenW, screenH);
 	EmitVertex(vtx1, screenW, screenH);
 
-	// Offset the vertices to form a quad
 	if(m_currentVertex >= 3)
 	{
 		float nxNDC = nx / screenW * 2.0f;
@@ -1226,29 +1171,28 @@ void CGSH_Metal::Prim_Line()
 }
 
 // ============================================================
-// Prim_Triangle - Render a triangle
+// Prim_Triangle
 // ============================================================
 void CGSH_Metal::Prim_Triangle()
 {
 	float screenW = m_screenWidth;
 	float screenH = m_screenHeight;
 
-	// vtxBuffer[2] = first vertex kicked, [0] = last
 	EmitVertex(m_vtxBuffer[2], screenW, screenH);
 	EmitVertex(m_vtxBuffer[1], screenW, screenH);
 	EmitVertex(m_vtxBuffer[0], screenW, screenH);
 }
 
 // ============================================================
-// Prim_Sprite - Render a sprite as 2 triangles
+// Prim_Sprite
 // ============================================================
 void CGSH_Metal::Prim_Sprite()
 {
 	float screenW = m_screenWidth;
 	float screenH = m_screenHeight;
 
-	auto& vtx0 = m_vtxBuffer[1]; // first vertex
-	auto& vtx1 = m_vtxBuffer[0]; // second vertex
+	auto& vtx0 = m_vtxBuffer[1];
+	auto& vtx1 = m_vtxBuffer[0];
 
 	auto xyz0 = make_convertible<XYZ>(vtx0.position);
 	auto xyz1 = make_convertible<XYZ>(vtx1.position);
@@ -1258,14 +1202,12 @@ void CGSH_Metal::Prim_Sprite()
 	float y1 = -((xyz1.GetY() - m_primOfsY) / screenH * 2.0f - 1.0f);
 	float z = (float)xyz1.nZ / 4294967296.0f;
 
-	// Use second vertex's color (sprite uses flat shading from v1)
 	auto rgbaq = make_convertible<RGBAQ>(vtx1.rgbaq);
 	float r = (float)rgbaq.nR / 255.0f;
 	float g = (float)rgbaq.nG / 255.0f;
 	float b = (float)rgbaq.nB / 255.0f;
 	float a = (float)rgbaq.nA / 128.0f;
 
-	// Texture coords
 	float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
 	if(m_drawIsTextured)
 	{
@@ -1310,60 +1252,34 @@ void CGSH_Metal::Prim_Sprite()
 		mv.padding = 0.0f;
 	};
 
-	// Triangle 1
 	emitSpriteVertex(x0, y0, u0, v0);
 	emitSpriteVertex(x1, y0, u1, v0);
 	emitSpriteVertex(x0, y1, u0, v1);
 
-	// Triangle 2
 	emitSpriteVertex(x1, y0, u1, v0);
 	emitSpriteVertex(x1, y1, u1, v1);
 	emitSpriteVertex(x0, y1, u0, v1);
 }
 
 // ============================================================
-// FlushVertices - Submit accumulated vertices to GPU
+// FlushVertices - Submit accumulated vertices using the FRAME-LEVEL encoder
+// No new command buffer created here. No waitUntilCompleted.
 // ============================================================
 void CGSH_Metal::FlushVertices()
 {
 	if(m_currentVertex == 0) return;
 
-	// Upload GS memory to the Metal buffer
-	UploadGSMemory();
-
-	id<MTLCommandBuffer> commandBuffer = [m_commandQueue commandBuffer];
-	if(!commandBuffer) return;
-
-	// Ensure we have render targets
-	if(m_presentColorTexture == nil)
+	EnsureFrameRenderEncoder();
+	if(m_frameRenderEncoder == nil)
 	{
-		if(m_presentWidth == 0 || m_presentHeight == 0)
-		{
-			m_presentWidth = (uint32)m_screenWidth;
-			m_presentHeight = (uint32)m_screenHeight;
-		}
-		CreatePresentRenderTargets(m_presentWidth, m_presentHeight);
-		if(m_presentColorTexture == nil)
-		{
-			m_currentVertex = 0;
-			return;
-		}
+		m_currentVertex = 0;
+		return;
 	}
 
-	MTLRenderPassDescriptor* renderPass = [MTLRenderPassDescriptor renderPassDescriptor];
-	renderPass.colorAttachments[0].texture = m_presentColorTexture;
-	renderPass.colorAttachments[0].loadAction = MTLLoadActionLoad;
-	renderPass.colorAttachments[0].storeAction = MTLStoreActionStore;
-	renderPass.depthAttachment.texture = m_presentDepthTexture;
-	renderPass.depthAttachment.loadAction = MTLLoadActionLoad;
-	renderPass.depthAttachment.storeAction = MTLStoreActionStore;
-
-	id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPass];
-
 	// Select pipeline
-	[encoder setRenderPipelineState:m_drawIsTextured ? m_drawPipelineTextured : m_drawPipelineFlat];
+	[m_frameRenderEncoder setRenderPipelineState:m_drawIsTextured ? m_drawPipelineTextured : m_drawPipelineFlat];
 
-	// Select depth state based on current test register
+	// Select depth state
 	id<MTLDepthStencilState> depthState;
 	if(!m_depthEnabled)
 	{
@@ -1390,28 +1306,30 @@ void CGSH_Metal::FlushVertices()
 			break;
 		}
 	}
-	[encoder setDepthStencilState:depthState];
+	[m_frameRenderEncoder setDepthStencilState:depthState];
 
-	// Set scissor rect
+	// Scissor rect
+	uint32 rtWidth = m_presentColorTexture ? (uint32)[m_presentColorTexture width] : m_presentWidth;
+	uint32 rtHeight = m_presentColorTexture ? (uint32)[m_presentColorTexture height] : m_presentHeight;
+
 	MTLScissorRect scissorRect;
 	scissorRect.x = m_scissorLeft;
 	scissorRect.y = m_scissorTop;
-	scissorRect.width = (m_scissorRight > m_scissorLeft) ? (m_scissorRight - m_scissorLeft + 1) : m_presentWidth;
-	scissorRect.height = (m_scissorBottom > m_scissorTop) ? (m_scissorBottom - m_scissorTop + 1) : m_presentHeight;
-	// Clamp to render target size
-	if(scissorRect.x + scissorRect.width > m_presentWidth)
-		scissorRect.width = m_presentWidth - scissorRect.x;
-	if(scissorRect.y + scissorRect.height > m_presentHeight)
-		scissorRect.height = m_presentHeight - scissorRect.y;
+	scissorRect.width = (m_scissorRight > m_scissorLeft) ? (m_scissorRight - m_scissorLeft + 1) : rtWidth;
+	scissorRect.height = (m_scissorBottom > m_scissorTop) ? (m_scissorBottom - m_scissorTop + 1) : rtHeight;
+	if(scissorRect.x + scissorRect.width > rtWidth)
+		scissorRect.width = rtWidth - scissorRect.x;
+	if(scissorRect.y + scissorRect.height > rtHeight)
+		scissorRect.height = rtHeight - scissorRect.y;
 	if(scissorRect.width > 0 && scissorRect.height > 0)
 	{
-		[encoder setScissorRect:scissorRect];
+		[m_frameRenderEncoder setScissorRect:scissorRect];
 	}
 
-	// Set vertex buffer
-	[encoder setVertexBuffer:m_vertexBuffer offset:0 atIndex:0];
+	// Vertex buffer
+	[m_frameRenderEncoder setVertexBuffer:m_vertexBuffer offset:0 atIndex:0];
 
-	// Build uniforms for fragment shader
+	// Uniforms
 	DrawUniforms uniforms = {};
 	uniforms.texSize = simd_make_float2(m_texWidth, m_texHeight);
 	uniforms.screenSize = simd_make_float2(m_screenWidth, m_screenHeight);
@@ -1430,22 +1348,18 @@ void CGSH_Metal::FlushVertices()
 	uniforms.fogColor = simd_make_float3(m_fogR, m_fogG, m_fogB);
 	uniforms.fogEnabled = m_primitiveMode.nFog ? 1 : 0;
 
-	[encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+	[m_frameRenderEncoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
 
 	if(m_drawIsTextured)
 	{
-		[encoder setFragmentBuffer:m_gsMemoryBuffer offset:0 atIndex:1];
-		[encoder setFragmentBuffer:m_clutBuffer offset:0 atIndex:2];
-		[encoder setFragmentBuffer:m_swizzleTablePSMCT32 offset:0 atIndex:3];
-		[encoder setFragmentBuffer:m_swizzleTablePSMCT16 offset:0 atIndex:4];
-		[encoder setFragmentBuffer:m_swizzleTablePSMT8 offset:0 atIndex:5];
+		[m_frameRenderEncoder setFragmentBuffer:m_gsMemoryBuffer offset:0 atIndex:1];
+		[m_frameRenderEncoder setFragmentBuffer:m_clutBuffer offset:0 atIndex:2];
+		[m_frameRenderEncoder setFragmentBuffer:m_swizzleTablePSMCT32 offset:0 atIndex:3];
+		[m_frameRenderEncoder setFragmentBuffer:m_swizzleTablePSMCT16 offset:0 atIndex:4];
+		[m_frameRenderEncoder setFragmentBuffer:m_swizzleTablePSMT8 offset:0 atIndex:5];
 	}
 
-	[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:m_currentVertex];
-	[encoder endEncoding];
-
-	[commandBuffer commit];
-	[commandBuffer waitUntilCompleted];
+	[m_frameRenderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:m_currentVertex];
 
 	m_currentVertex = 0;
 }
@@ -1457,7 +1371,7 @@ void CGSH_Metal::UploadGSMemory()
 }
 
 // ============================================================
-// SyncCLUT - Read CLUT data from GS memory for indexed textures
+// SyncCLUT
 // ============================================================
 void CGSH_Metal::SyncCLUT(const TEX0& tex0)
 {
@@ -1474,7 +1388,6 @@ void CGSH_Metal::SyncCLUT(const TEX0& tex0)
 
 	if(cpsm == PSMCT32)
 	{
-		// 32-bit CLUT entries
 		CGsPixelFormats::CPixelIndexorPSMCT32 indexor(m_memoryCache, clutPtr, 1);
 		for(uint32 i = 0; i < clutEntryCount; i++)
 		{
@@ -1484,7 +1397,6 @@ void CGSH_Metal::SyncCLUT(const TEX0& tex0)
 	}
 	else if(cpsm == PSMCT16 || cpsm == PSMCT16S)
 	{
-		// 16-bit CLUT entries, convert to 32-bit
 		CGsPixelFormats::CPixelIndexorPSMCT16 indexor(m_memoryCache, clutPtr, 1);
 		for(uint32 i = 0; i < clutEntryCount; i++)
 		{
@@ -1499,25 +1411,34 @@ void CGSH_Metal::SyncCLUT(const TEX0& tex0)
 }
 
 // ============================================================
-// FlipImpl - Called when the frame is done
+// FlipImpl - Frame end: flush, present, commit
 // ============================================================
 void CGSH_Metal::FlipImpl(const DISPLAY_INFO& dispInfo)
 {
 	FlushVertices();
 
-	// Update screen size from display info
 	if(dispInfo.width > 0 && dispInfo.height > 0)
 	{
 		m_screenWidth = (float)dispInfo.width;
 		m_screenHeight = (float)dispInfo.height;
 	}
 
+	// End the draw render encoder before present
+	EndFrameRenderEncoder();
+
 	DoPresent(dispInfo);
+
+	// Reset frame state for next frame
+	m_frameClearedThisFrame = false;
+	m_gsMemoryDirty = true;
+	m_frameCommandBuffer = nil;
+
 	CGSHandler::FlipImpl(dispInfo);
 }
 
 // ============================================================
-// DoPresent - Read from GS memory and display on screen
+// DoPresent - Blit m_presentColorTexture to the CAMetalLayer drawable
+// This is the ONLY place where a command buffer is committed per frame.
 // ============================================================
 void CGSH_Metal::DoPresent(const DISPLAY_INFO& dispInfo)
 {
@@ -1525,13 +1446,23 @@ void CGSH_Metal::DoPresent(const DISPLAY_INFO& dispInfo)
 
 	@autoreleasepool
 	{
+		// Wait for a free inflight frame slot
+		dispatch_semaphore_wait(m_inflightSemaphore, DISPATCH_TIME_FOREVER);
+
 		m_currentDrawable = [m_metalLayer nextDrawable];
-		if(!m_currentDrawable) return;
+		if(!m_currentDrawable)
+		{
+			dispatch_semaphore_signal(m_inflightSemaphore);
+			return;
+		}
 
-		UploadGSMemory();
+		EnsureFrameCommandBuffer();
 
-		id<MTLCommandBuffer> commandBuffer = [m_commandQueue commandBuffer];
-		if(!commandBuffer) return;
+		// Add completion handler to signal the semaphore
+		__block dispatch_semaphore_t semaphore = m_inflightSemaphore;
+		[m_frameCommandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull) {
+		  dispatch_semaphore_signal(semaphore);
+		}];
 
 		MTLRenderPassDescriptor* renderPass = [MTLRenderPassDescriptor renderPassDescriptor];
 		renderPass.colorAttachments[0].texture = [m_currentDrawable texture];
@@ -1539,33 +1470,20 @@ void CGSH_Metal::DoPresent(const DISPLAY_INFO& dispInfo)
 		renderPass.colorAttachments[0].storeAction = MTLStoreActionStore;
 		renderPass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
 
-		id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPass];
+		id<MTLRenderCommandEncoder> encoder = [m_frameCommandBuffer renderCommandEncoderWithDescriptor:renderPass];
 
-		// Present each display layer
-		for(unsigned int i = 0; i < DISPLAY_INFO::MAX_LAYERS; i++)
+		if(m_presentColorTexture != nil)
 		{
-			if(!dispInfo.layers[i].enabled) continue;
-
-			auto& layer = dispInfo.layers[i];
-
-			PresentUniforms uniforms = {};
-			uniforms.srcSize = simd_make_float2(layer.width, layer.height);
-			uniforms.dstSize = simd_make_float2(m_presentWidth, m_presentHeight);
-			uniforms.fbPtr = layer.bufPtr;
-			uniforms.fbWidth = layer.bufWidth;
-			uniforms.fbPsm = layer.psm;
-
+			// Blit the rendered framebuffer texture to the drawable
 			[encoder setRenderPipelineState:m_presentPipeline];
-			[encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
-			[encoder setFragmentBuffer:m_gsMemoryBuffer offset:0 atIndex:1];
-			[encoder setFragmentBuffer:m_swizzleTablePSMCT32 offset:0 atIndex:2];
-			[encoder setFragmentBuffer:m_swizzleTablePSMCT16 offset:0 atIndex:3];
+			[encoder setFragmentTexture:m_presentColorTexture atIndex:0];
+			[encoder setFragmentSamplerState:m_samplerBilinear atIndex:0];
 			[encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
 		}
 
 		[encoder endEncoding];
-		[commandBuffer presentDrawable:m_currentDrawable];
-		[commandBuffer commit];
+		[m_frameCommandBuffer presentDrawable:m_currentDrawable];
+		[m_frameCommandBuffer commit];
 
 		m_currentDrawable = nil;
 	}
@@ -1576,19 +1494,19 @@ void CGSH_Metal::DoPresent(const DISPLAY_INFO& dispInfo)
 // ============================================================
 void CGSH_Metal::ProcessHostToLocalTransfer()
 {
+	// End current encoder since we're modifying GS memory
 	FlushVertices();
+	EndFrameRenderEncoder();
 
-	// The base class TransferWrite handlers have already written data to m_pRAM.
-	// We just need to sync m_pRAM to our memory cache.
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_memoryCache, m_pRAM, GS_RAM_SIZE);
 	}
+	m_gsMemoryDirty = true;
 }
 
 void CGSH_Metal::ProcessLocalToHostTransfer()
 {
-	// Sync our memory cache back to m_pRAM so ReadImageData can read it
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_pRAM, m_memoryCache, GS_RAM_SIZE);
@@ -1598,15 +1516,13 @@ void CGSH_Metal::ProcessLocalToHostTransfer()
 void CGSH_Metal::ProcessLocalToLocalTransfer()
 {
 	FlushVertices();
+	EndFrameRenderEncoder();
 
-	// Local-to-local transfer operates on m_pRAM directly.
-	// Sync our cache to m_pRAM, perform the copy, then sync back.
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_pRAM, m_memoryCache, GS_RAM_SIZE);
 	}
 
-	// Perform the actual local-to-local copy in m_pRAM
 	auto bltBuf = make_convertible<BITBLTBUF>(m_nReg[GS_REG_BITBLTBUF]);
 	auto trxPos = make_convertible<TRXPOS>(m_nReg[GS_REG_TRXPOS]);
 	auto trxReg = make_convertible<TRXREG>(m_nReg[GS_REG_TRXREG]);
@@ -1620,7 +1536,6 @@ void CGSH_Metal::ProcessLocalToLocalTransfer()
 			uint32 dstX = trxPos.nDSAX + x;
 			uint32 dstY = trxPos.nDSAY + y;
 
-			// Simple PSMCT32 copy (most common case)
 			CGsPixelFormats::CPixelIndexorPSMCT32 srcIdx(m_pRAM, bltBuf.GetSrcPtr(), bltBuf.GetSrcWidth());
 			CGsPixelFormats::CPixelIndexorPSMCT32 dstIdx(m_pRAM, bltBuf.GetDstPtr(), bltBuf.GetDstWidth());
 			uint32 pixel = srcIdx.GetPixel(srcX, srcY);
@@ -1628,22 +1543,16 @@ void CGSH_Metal::ProcessLocalToLocalTransfer()
 		}
 	}
 
-	// Sync back
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_memoryCache, m_pRAM, GS_RAM_SIZE);
 	}
+	m_gsMemoryDirty = true;
 }
 
 void CGSH_Metal::ProcessClutTransfer(uint32 csa, uint32 csm)
 {
-	// Base class writes CLUT data to m_pCLUT
-	// We don't need to do anything special here - SyncCLUT reads directly from GS memory
 }
-
-// BeginTransferWrite and TransferWrite are not overridden.
-// The base class CGSHandler::TransferWrite writes directly to m_pRAM
-// using the appropriate transfer write handlers for each PSM format.
 
 // ============================================================
 // CLUT cache helpers
