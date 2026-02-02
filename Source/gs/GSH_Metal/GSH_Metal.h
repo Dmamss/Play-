@@ -44,8 +44,6 @@ protected:
 	void FlipImpl(const DISPLAY_INFO&) override;
 	void MarkNewFrame() override;
 	void WriteRegisterImpl(uint8, uint64) override;
-	void BeginTransferWrite() override;
-	void TransferWrite(const uint8*, uint32) override;
 	void SyncCLUT(const TEX0&) override;
 
 	virtual void PresentBackbuffer() = 0;
@@ -203,7 +201,6 @@ private:
 	uint32 m_texCLUTPtr = 0;
 	uint32 m_texCLUTPsm = 0;
 	uint32 m_texFunction = 0;
-	std::vector<uint8> m_xferBuffer;
 
 	// Vertex accumulation
 	MetalVertex* m_mappedVertices = nullptr;
@@ -245,10 +242,6 @@ private:
 	// Screen dimensions (from display register)
 	float m_screenWidth = 640.0f;
 	float m_screenHeight = 448.0f;
-
-	bool m_depthTestingEnabled = true;
-	bool m_alphaBlendingEnabled = true;
-	bool m_alphaTestingEnabled = true;
 
 	CLUTKEY m_clutStates[CLUT_CACHE_SIZE];
 	uint32 m_nextClutCacheIndex = 0;

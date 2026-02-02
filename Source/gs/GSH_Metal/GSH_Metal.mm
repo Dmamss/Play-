@@ -91,8 +91,6 @@ void CGSH_Metal::InitializeImpl()
 
 	m_memoryCache = new uint8[GS_RAM_SIZE];
 	memset(m_memoryCache, 0, GS_RAM_SIZE);
-
-	CGSHandler::InitializeImpl();
 }
 
 void CGSH_Metal::ReleaseImpl()
@@ -126,8 +124,6 @@ void CGSH_Metal::ReleaseImpl()
 
 	delete[] m_memoryCache;
 	m_memoryCache = nullptr;
-
-	CGSHandler::ReleaseImpl();
 }
 
 void CGSH_Metal::ResetImpl()
@@ -136,7 +132,6 @@ void CGSH_Metal::ResetImpl()
 	m_pendingPrim = false;
 	m_currentVertex = 0;
 	m_nextClutCacheIndex = 0;
-	m_xferBuffer.clear();
 	m_drawIsTextured = false;
 	m_primitiveType = PRIM_INVALID;
 
@@ -849,12 +844,6 @@ void CGSH_Metal::MarkNewFrame()
 // ============================================================
 void CGSH_Metal::WriteRegisterImpl(uint8 registerId, uint64 data)
 {
-	// Handle incomplete transfers (games like Silent Hill 2)
-	if(!m_xferBuffer.empty() && (registerId != GS_REG_HWREG))
-	{
-		ProcessHostToLocalTransfer();
-	}
-
 	CGSHandler::WriteRegisterImpl(registerId, data);
 
 	switch(registerId)
@@ -1587,47 +1576,59 @@ void CGSH_Metal::DoPresent(const DISPLAY_INFO& dispInfo)
 // ============================================================
 void CGSH_Metal::ProcessHostToLocalTransfer()
 {
-	if(m_xferBuffer.empty()) return;
-
 	FlushVertices();
 
-	// Delegate to base class which handles all PSM formats using
-	// the write handlers and writes to m_pRAM
-	CGSHandler::ProcessHostToLocalTransfer();
-
-	// Copy affected area from m_pRAM to our memory cache
+	// The base class TransferWrite handlers have already written data to m_pRAM.
+	// We just need to sync m_pRAM to our memory cache.
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_memoryCache, m_pRAM, GS_RAM_SIZE);
 	}
-
-	m_xferBuffer.clear();
 }
 
 void CGSH_Metal::ProcessLocalToHostTransfer()
 {
-	// Sync our memory cache back to RAM first
+	// Sync our memory cache back to m_pRAM so ReadImageData can read it
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_pRAM, m_memoryCache, GS_RAM_SIZE);
 	}
-
-	CGSHandler::ProcessLocalToHostTransfer();
 }
 
 void CGSH_Metal::ProcessLocalToLocalTransfer()
 {
 	FlushVertices();
 
-	// Sync memory before transfer
+	// Local-to-local transfer operates on m_pRAM directly.
+	// Sync our cache to m_pRAM, perform the copy, then sync back.
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_pRAM, m_memoryCache, GS_RAM_SIZE);
 	}
 
-	CGSHandler::ProcessLocalToLocalTransfer();
+	// Perform the actual local-to-local copy in m_pRAM
+	auto bltBuf = make_convertible<BITBLTBUF>(m_nReg[GS_REG_BITBLTBUF]);
+	auto trxPos = make_convertible<TRXPOS>(m_nReg[GS_REG_TRXPOS]);
+	auto trxReg = make_convertible<TRXREG>(m_nReg[GS_REG_TRXREG]);
 
-	// Copy back after transfer
+	for(uint32 y = 0; y < trxReg.nRRH; y++)
+	{
+		for(uint32 x = 0; x < trxReg.nRRW; x++)
+		{
+			uint32 srcX = trxPos.nSSAX + x;
+			uint32 srcY = trxPos.nSSAY + y;
+			uint32 dstX = trxPos.nDSAX + x;
+			uint32 dstY = trxPos.nDSAY + y;
+
+			// Simple PSMCT32 copy (most common case)
+			CGsPixelFormats::CPixelIndexorPSMCT32 srcIdx(m_pRAM, bltBuf.GetSrcPtr(), bltBuf.GetSrcWidth());
+			CGsPixelFormats::CPixelIndexorPSMCT32 dstIdx(m_pRAM, bltBuf.GetDstPtr(), bltBuf.GetDstWidth());
+			uint32 pixel = srcIdx.GetPixel(srcX, srcY);
+			dstIdx.SetPixel(dstX, dstY, pixel);
+		}
+	}
+
+	// Sync back
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_memoryCache, m_pRAM, GS_RAM_SIZE);
@@ -1640,15 +1641,9 @@ void CGSH_Metal::ProcessClutTransfer(uint32 csa, uint32 csm)
 	// We don't need to do anything special here - SyncCLUT reads directly from GS memory
 }
 
-void CGSH_Metal::BeginTransferWrite()
-{
-	m_xferBuffer.clear();
-}
-
-void CGSH_Metal::TransferWrite(const uint8* buffer, uint32 length)
-{
-	m_xferBuffer.insert(m_xferBuffer.end(), buffer, buffer + length);
-}
+// BeginTransferWrite and TransferWrite are not overridden.
+// The base class CGSHandler::TransferWrite writes directly to m_pRAM
+// using the appropriate transfer write handlers for each PSM format.
 
 // ============================================================
 // CLUT cache helpers
