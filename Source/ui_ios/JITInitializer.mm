@@ -4,6 +4,21 @@
 #import <sys/sysctl.h>
 #import <sys/mman.h>
 
+NSNotificationName const JITMemoryReadyNotification = @"JITMemoryReadyNotification";
+
+/// Readiness tracking
+static dispatch_semaphore_t s_jitReadySemaphore;
+static BOOL s_jitReady = NO;
+static dispatch_once_t s_semaphoreOnce;
+
+static dispatch_semaphore_t GetReadySemaphore()
+{
+	dispatch_once(&s_semaphoreOnce, ^{
+	  s_jitReadySemaphore = dispatch_semaphore_create(0);
+	});
+	return s_jitReadySemaphore;
+}
+
 @implementation JITInitializer
 
 + (BOOL)deviceHasTXM
@@ -30,10 +45,6 @@
 	}
 
 	// --- 2. Fallback: detect TXM via hw.machine model identifier ---
-	// TXM is present on A15+ chips. Device model numbers that have TXM:
-	//   iPhone14,x and later (A15+)
-	//   iPad13,x and later (M1/A15+)
-	// Parse the major model number to detect TXM generically.
 	char machine[64] = {0};
 	size_t machsize = sizeof(machine);
 	if(sysctlbyname("hw.machine", machine, &machsize, NULL, 0) == 0)
@@ -73,24 +84,106 @@
 
 + (void)allocateExecutableMemoryIfNeeded
 {
+	if(s_jitReady) return;
+
 	auto jitType = CodeGen::GetJitType();
 
 	if(jitType == CodeGen::JitType::LuckTXM)
 	{
 		if(CodeGen::IsExecutableMemoryRegionAllocated())
+		{
+			[self signalReady];
 			return;
+		}
 
+		NSLog(@"[JITInitializer] Allocating LuckTXM executable memory region...");
 		CodeGen::AllocateExecutableMemoryRegion();
 
 		if(!CodeGen::IsExecutableMemoryRegionAllocated())
 		{
 			NSLog(@"[JITInitializer] ERROR: Failed to allocate executable memory region");
+			// Signal ready anyway to unblock waiters (they'll get an error at JIT time)
+			[self signalReady];
+			return;
 		}
+		NSLog(@"[JITInitializer] LuckTXM region allocated successfully");
 	}
 	else if(jitType == CodeGen::JitType::LuckNoTXM)
 	{
+		NSLog(@"[JITInitializer] Allocating LuckNoTXM pool...");
 		CodeGen::AllocateNoTxmPool();
+		NSLog(@"[JITInitializer] LuckNoTXM pool allocated");
 	}
+	else
+	{
+		NSLog(@"[JITInitializer] Legacy JIT mode - no pre-allocation needed");
+	}
+
+	[self signalReady];
+}
+
++ (void)beginAsyncAllocation
+{
+	if(s_jitReady)
+	{
+		NSLog(@"[JITInitializer] Already ready, skipping async allocation");
+		return;
+	}
+
+	NSLog(@"[JITInitializer] Starting async JIT memory allocation...");
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	  [self allocateExecutableMemoryIfNeeded];
+	});
+}
+
++ (BOOL)isReady
+{
+	return s_jitReady;
+}
+
++ (BOOL)waitForReadiness:(NSTimeInterval)timeout
+{
+	if(s_jitReady) return YES;
+
+	auto jitType = CodeGen::GetJitType();
+	if(jitType == CodeGen::JitType::Legacy)
+	{
+		// Legacy mode doesn't need pre-allocation
+		[self signalReady];
+		return YES;
+	}
+
+	if(timeout <= 0) return s_jitReady;
+
+	NSLog(@"[JITInitializer] Waiting for JIT readiness (timeout: %.1fs)...", timeout);
+	dispatch_time_t deadline = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC));
+	long result = dispatch_semaphore_wait(GetReadySemaphore(), deadline);
+
+	if(result == 0)
+	{
+		// Re-signal so other waiters also unblock
+		dispatch_semaphore_signal(GetReadySemaphore());
+		NSLog(@"[JITInitializer] JIT ready");
+		return YES;
+	}
+	else
+	{
+		NSLog(@"[JITInitializer] Timed out waiting for JIT readiness");
+		return NO;
+	}
+}
+
++ (void)signalReady
+{
+	if(s_jitReady) return;
+	s_jitReady = YES;
+	dispatch_semaphore_signal(GetReadySemaphore());
+
+	// Post notification (on main thread for UI observers)
+	dispatch_async(dispatch_get_main_queue(), ^{
+	  [[NSNotificationCenter defaultCenter] postNotificationName:JITMemoryReadyNotification object:nil];
+	});
 }
 
 @end

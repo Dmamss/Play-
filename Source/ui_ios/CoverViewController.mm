@@ -137,10 +137,9 @@ static NSString* const reuseIdentifier = @"coverCell";
 	StikDebugJitService* jitService = [StikDebugJitService sharedService];
 	if([jitService isJitActive])
 	{
-		// Debugger already attached — allocate on background thread to avoid watchdog kill
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		  [JITInitializer allocateExecutableMemoryIfNeeded];
-		});
+		// Debugger already attached — begin async allocation if not already started.
+		// AppDelegate also kicks this off, but this is a safety net.
+		[JITInitializer beginAsyncAllocation];
 	}
 	else if([jitService needsActivation])
 	{
@@ -184,9 +183,10 @@ static NSString* const reuseIdentifier = @"coverCell";
 			                                                     [jitService requestActivationWithCompletion:^(BOOL success, NSError* error) {
 				                                                   if(success)
 				                                                   {
-					                                                   // JIT activated — allocate on background thread to avoid watchdog kill
+					                                                   // JIT activated — begin async allocation (non-blocking)
+					                                                   [JITInitializer beginAsyncAllocation];
 					                                                   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-						                                                 [JITInitializer allocateExecutableMemoryIfNeeded];
+						                                                 [JITInitializer waitForReadiness:10.0];
 						                                                 dispatch_async(dispatch_get_main_queue(), ^{
 							                                               UIAlertController* successAlert = [UIAlertController
 							                                                   alertControllerWithTitle:@"JIT Active"
