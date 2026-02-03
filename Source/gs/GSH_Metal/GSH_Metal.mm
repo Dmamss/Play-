@@ -9,6 +9,7 @@
 
 // Metal-specific preference keys (matches ui_ios/PreferenceDefs.h)
 #define PREF_METAL_ACCURATE_BLENDING "video.metal.accurateblending"
+#define PREF_METAL_PRECOMPILE_SHADERS "video.metal.precompileshaders"
 
 // Uniform buffer for draw calls
 struct DrawUniforms
@@ -122,6 +123,10 @@ void CGSH_Metal::SetPresentationParams(const PRESENTATION_PARAMS& params)
 
 void CGSH_Metal::InitializeImpl()
 {
+	// Read user preferences first
+	m_accurateBlendingEnabled = CAppConfig::GetInstance().GetPreferenceBoolean(PREF_METAL_ACCURATE_BLENDING);
+	m_precompileShadersEnabled = CAppConfig::GetInstance().GetPreferenceBoolean(PREF_METAL_PRECOMPILE_SHADERS);
+
 	CreateDevice();
 	CreateBuffers();
 	CreateSwizzleTables();
@@ -129,13 +134,16 @@ void CGSH_Metal::InitializeImpl()
 	CreateDepthStencilStates();
 	CreateSamplerStates();
 
+	// Pre-compile all shader variants if enabled (reduces runtime stuttering)
+	if(m_precompileShadersEnabled)
+	{
+		PrecompileShaders();
+	}
+
 	m_inflightSemaphore = dispatch_semaphore_create(MAX_INFLIGHT_FRAMES);
 
 	m_memoryCache = new uint8[GS_RAM_SIZE];
 	memset(m_memoryCache, 0, GS_RAM_SIZE);
-
-	// Read user preferences
-	m_accurateBlendingEnabled = CAppConfig::GetInstance().GetPreferenceBoolean(PREF_METAL_ACCURATE_BLENDING);
 }
 
 void CGSH_Metal::ReleaseImpl()
@@ -1912,4 +1920,87 @@ int32 CGSH_Metal::FindCachedClut(const CLUTKEY& key) const
 		}
 	}
 	return -1;
+}
+
+// ============================================================
+// PrecompileShaders - Warm up GPU shader cache before gameplay
+// This reduces stuttering by ensuring all shader variants are
+// compiled and cached by the GPU driver before actual use.
+// ============================================================
+void CGSH_Metal::PrecompileShaders()
+{
+	@autoreleasepool
+	{
+		NSLog(@"[GSH_Metal] Pre-compiling shader variants...");
+
+		// Create a temporary render target for pre-compilation
+		MTLTextureDescriptor* texDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+		                                                                                   width:64
+		                                                                                  height:64
+		                                                                               mipmapped:NO];
+		texDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+		texDesc.storageMode = MTLStorageModePrivate;
+		id<MTLTexture> tempColorTex = [m_device newTextureWithDescriptor:texDesc];
+
+		MTLTextureDescriptor* depthDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+		                                                                                     width:64
+		                                                                                    height:64
+		                                                                                 mipmapped:NO];
+		depthDesc.usage = MTLTextureUsageRenderTarget;
+		depthDesc.storageMode = MTLStorageModePrivate;
+		id<MTLTexture> tempDepthTex = [m_device newTextureWithDescriptor:depthDesc];
+
+		// Create command buffer for pre-compilation
+		id<MTLCommandBuffer> cmdBuffer = [m_commandQueue commandBuffer];
+		cmdBuffer.label = @"GSH_Metal Shader Precompile";
+
+		MTLRenderPassDescriptor* renderPass = [MTLRenderPassDescriptor renderPassDescriptor];
+		renderPass.colorAttachments[0].texture = tempColorTex;
+		renderPass.colorAttachments[0].loadAction = MTLLoadActionClear;
+		renderPass.colorAttachments[0].storeAction = MTLStoreActionStore;
+		renderPass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
+		renderPass.depthAttachment.texture = tempDepthTex;
+		renderPass.depthAttachment.loadAction = MTLLoadActionClear;
+		renderPass.depthAttachment.storeAction = MTLStoreActionStore;
+		renderPass.depthAttachment.clearDepth = 0.0;
+
+		id<MTLRenderCommandEncoder> encoder = [cmdBuffer renderCommandEncoderWithDescriptor:renderPass];
+
+		// Warm up each pipeline state by binding it
+		// The GPU driver will compile/cache the shader when first bound
+		NSArray* pipelines = @[];
+		if(m_drawPipelineFlat) pipelines = [pipelines arrayByAddingObject:m_drawPipelineFlat];
+		if(m_drawPipelineTextured) pipelines = [pipelines arrayByAddingObject:m_drawPipelineTextured];
+		if(m_drawPipelineFlatFBFetch) pipelines = [pipelines arrayByAddingObject:m_drawPipelineFlatFBFetch];
+		if(m_drawPipelineTexturedFBFetch) pipelines = [pipelines arrayByAddingObject:m_drawPipelineTexturedFBFetch];
+		if(m_presentPipeline) pipelines = [pipelines arrayByAddingObject:m_presentPipeline];
+
+		// Warm up each depth state
+		NSArray* depthStates = @[];
+		if(m_depthStateNever) depthStates = [depthStates arrayByAddingObject:m_depthStateNever];
+		if(m_depthStateAlways) depthStates = [depthStates arrayByAddingObject:m_depthStateAlways];
+		if(m_depthStateGEqual) depthStates = [depthStates arrayByAddingObject:m_depthStateGEqual];
+		if(m_depthStateGreater) depthStates = [depthStates arrayByAddingObject:m_depthStateGreater];
+		if(m_depthDisabledWrite) depthStates = [depthStates arrayByAddingObject:m_depthDisabledWrite];
+		if(m_depthDisabledNoWrite) depthStates = [depthStates arrayByAddingObject:m_depthDisabledNoWrite];
+
+		// Bind each pipeline and depth state combination to warm up the cache
+		for(id<MTLRenderPipelineState> pipeline in pipelines)
+		{
+			[encoder setRenderPipelineState:pipeline];
+			for(id<MTLDepthStencilState> depthState in depthStates)
+			{
+				[encoder setDepthStencilState:depthState];
+			}
+		}
+
+		[encoder endEncoding];
+
+		// Commit and wait for completion to ensure shaders are fully compiled
+		[cmdBuffer commit];
+		[cmdBuffer waitUntilCompleted];
+
+		NSLog(@"[GSH_Metal] Pre-compiled %lu pipeline states with %lu depth states",
+		      (unsigned long)[pipelines count], (unsigned long)[depthStates count]);
+	}
 }

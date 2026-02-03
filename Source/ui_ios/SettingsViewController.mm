@@ -117,6 +117,7 @@
 
 	// Metal renderer options (default to ON for best quality)
 	[metalAccurateBlendingSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_METAL_ACCURATE_BLENDING)];
+	[metalPrecompileShadersSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_METAL_PRECOMPILE_SHADERS)];
 
 	NSString* versionString = [NSString stringWithFormat:@"%s - %s", PLAY_VERSION, __DATE__];
 	versionInfoLabel.text = versionString;
@@ -155,6 +156,7 @@
 
 	// Metal renderer options
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_METAL_ACCURATE_BLENDING, metalAccurateBlendingSwitch.isOn);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_METAL_PRECOMPILE_SHADERS, metalPrecompileShadersSwitch.isOn);
 
 	CAppConfig::GetInstance().Save();
 

@@ -44,6 +44,7 @@
 
 // Metal renderer options
 #define PREFERENCE_VIDEO_METAL_ACCURATE_BLENDING "video.metal.accurateblending"
+#define PREFERENCE_VIDEO_METAL_PRECOMPILE_SHADERS "video.metal.precompileshaders"
 
 #define PREFERENCE_ALTSTORE_JIT_ENABLED "altstore.jit.enabled"
 // iOS 26+ StikDebug JIT activation

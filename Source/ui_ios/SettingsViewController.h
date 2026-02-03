@@ -38,6 +38,7 @@
 
 	// Metal renderer options
 	IBOutlet UISwitch* metalAccurateBlendingSwitch;
+	IBOutlet UISwitch* metalPrecompileShadersSwitch;
 
 	IBOutlet UILabel* versionInfoLabel;
 }

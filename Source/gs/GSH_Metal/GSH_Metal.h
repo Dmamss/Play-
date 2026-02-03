@@ -190,6 +190,7 @@ private:
 	void CreateBuffers();
 	void CreateSwizzleTables();
 	void CreatePresentRenderTargets(uint32 width, uint32 height);
+	void PrecompileShaders();
 
 	void ProcessPrim(uint64);
 	void VertexKick(uint8, uint64);
@@ -271,8 +272,9 @@ private:
 	uint32 m_alphaC = 0;
 	uint32 m_alphaD = 0;
 	uint32 m_alphaFix = 0;
-	bool m_useFramebufferFetch = false;    // True when blend mode requires FB fetch
-	bool m_accurateBlendingEnabled = true; // User preference for accurate PS2 blending
+	bool m_useFramebufferFetch = false;     // True when blend mode requires FB fetch
+	bool m_accurateBlendingEnabled = true;  // User preference for accurate PS2 blending
+	bool m_precompileShadersEnabled = true; // User preference for shader pre-compilation
 
 	// Fog
 	float m_fogR = 0;
