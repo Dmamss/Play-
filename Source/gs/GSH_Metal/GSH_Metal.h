@@ -58,7 +58,10 @@ protected:
 	// Render pipeline states
 	id<MTLRenderPipelineState> m_drawPipelineFlat;
 	id<MTLRenderPipelineState> m_drawPipelineTextured;
+	id<MTLRenderPipelineState> m_drawPipelineFlatFBFetch;    // Framebuffer fetch variant
+	id<MTLRenderPipelineState> m_drawPipelineTexturedFBFetch; // Framebuffer fetch variant
 	id<MTLRenderPipelineState> m_presentPipeline;
+	bool m_supportsFramebufferFetch;
 
 	// Depth/stencil states
 	id<MTLDepthStencilState> m_depthStateNever;
@@ -112,7 +115,10 @@ protected:
 	void* m_library;
 	void* m_drawPipelineFlat;
 	void* m_drawPipelineTextured;
+	void* m_drawPipelineFlatFBFetch;
+	void* m_drawPipelineTexturedFBFetch;
 	void* m_presentPipeline;
+	bool m_supportsFramebufferFetch;
 	void* m_depthStateNever;
 	void* m_depthStateAlways;
 	void* m_depthStateGEqual;
@@ -265,6 +271,7 @@ private:
 	uint32 m_alphaC = 0;
 	uint32 m_alphaD = 0;
 	uint32 m_alphaFix = 0;
+	bool m_useFramebufferFetch = false; // True when blend mode requires FB fetch
 
 	// Fog
 	float m_fogR = 0;

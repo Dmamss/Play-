@@ -285,6 +285,171 @@ fragment float4 fs_draw_textured(VertexOut in [[stage_in]],
 }
 
 // ============================================================
+// Fragment shader: flat with framebuffer fetch (A11+ devices)
+// Enables accurate PS2 alpha blending by reading destination color
+// ============================================================
+struct FBFetchUniforms {
+    float2 texSize;
+    float2 screenSize;
+    float alphaFix;
+    uint fbBasePtr;
+    uint fbWidth;
+    uint texBasePtr;
+    uint texBufWidth;
+    uint texPsm;
+    uint clutBasePtr;
+    uint clutPsm;
+    uint alphaRef;
+    uint alphaFunc;
+    uint texFunction;
+    uint alphaTestEnabled;
+    float3 fogColor;
+    uint fogEnabled;
+    // PS2 alpha blend parameters: Cv = (A - B) * C + D
+    uint alphaA;  // 0=Cs, 1=Cd, 2=0
+    uint alphaB;  // 0=Cs, 1=Cd, 2=0
+    uint alphaC;  // 0=As, 1=Ad, 2=FIX
+    uint alphaD;  // 0=Cs, 1=Cd, 2=0
+};
+
+fragment float4 fs_draw_flat_fbfetch(VertexOut in [[stage_in]],
+                                      float4 destColor [[color(0)]],
+                                      constant FBFetchUniforms& uniforms [[buffer(0)]]) {
+    float4 srcColor = in.color;
+
+    if(uniforms.alphaTestEnabled != 0) {
+        if(!alphaTest(srcColor.a, uniforms.alphaFunc, uniforms.alphaRef)) {
+            discard_fragment();
+        }
+    }
+    if(uniforms.fogEnabled != 0) {
+        float fogFactor = in.fog / 255.0;
+        srcColor.rgb = mix(uniforms.fogColor, srcColor.rgb, fogFactor);
+    }
+
+    // PS2 alpha blend: Cv = (A - B) * C + D
+    float3 A, B, D;
+    float C;
+
+    // Select A component
+    if(uniforms.alphaA == 0) A = srcColor.rgb;
+    else if(uniforms.alphaA == 1) A = destColor.rgb;
+    else A = float3(0);
+
+    // Select B component
+    if(uniforms.alphaB == 0) B = srcColor.rgb;
+    else if(uniforms.alphaB == 1) B = destColor.rgb;
+    else B = float3(0);
+
+    // Select C component (alpha factor)
+    if(uniforms.alphaC == 0) C = srcColor.a;
+    else if(uniforms.alphaC == 1) C = destColor.a;
+    else C = uniforms.alphaFix;
+
+    // Select D component
+    if(uniforms.alphaD == 0) D = srcColor.rgb;
+    else if(uniforms.alphaD == 1) D = destColor.rgb;
+    else D = float3(0);
+
+    float3 blendedColor = (A - B) * C + D;
+    return float4(clamp(blendedColor, 0.0, 1.0), srcColor.a);
+}
+
+fragment float4 fs_draw_textured_fbfetch(VertexOut in [[stage_in]],
+                                          float4 destColor [[color(0)]],
+                                          constant FBFetchUniforms& uniforms [[buffer(0)]],
+                                          constant uint* gsMemory [[buffer(1)]],
+                                          constant uint* clutData [[buffer(2)]],
+                                          constant uint* swizzleTableCT32 [[buffer(3)]],
+                                          constant uint* swizzleTableCT16 [[buffer(4)]],
+                                          constant uint* swizzleTableT8 [[buffer(5)]]) {
+    int2 texCoord = int2(in.texcoord);
+    texCoord.x = clamp(texCoord.x, 0, int(uniforms.texSize.x) - 1);
+    texCoord.y = clamp(texCoord.y, 0, int(uniforms.texSize.y) - 1);
+
+    float4 texColor;
+    constant uchar* gsMemBytes = reinterpret_cast<constant uchar*>(gsMemory);
+    uint psm = uniforms.texPsm;
+
+    // Same texture fetch logic as fs_draw_textured
+    if(psm == 0x00 || psm == 0x01) {
+        uint pixel = readPixelPSMCT32(texCoord.x, texCoord.y,
+                                       uniforms.texBasePtr, uniforms.texBufWidth,
+                                       gsMemory, swizzleTableCT32);
+        texColor = unpackColor32(pixel);
+        if(psm == 0x01) texColor.a = 1.0;
+    } else if(psm == 0x02 || psm == 0x0A) {
+        uint pixel = readPixelPSMCT16(texCoord.x, texCoord.y,
+                                       uniforms.texBasePtr, uniforms.texBufWidth,
+                                       gsMemBytes, swizzleTableCT16);
+        texColor = unpackColor16(pixel);
+    } else if(psm == 0x13) {
+        uint index = readPixelPSMT8(texCoord.x, texCoord.y,
+                                     uniforms.texBasePtr, uniforms.texBufWidth,
+                                     gsMemBytes, swizzleTableT8);
+        uint clutEntry = clutData[index & 0xFF];
+        texColor = unpackColor32(clutEntry);
+    } else if(psm == 0x14) {
+        uint index = readPixelPSMT8(texCoord.x / 2, texCoord.y,
+                                     uniforms.texBasePtr, uniforms.texBufWidth,
+                                     gsMemBytes, swizzleTableT8);
+        if((texCoord.x & 1) == 0) index = index & 0x0F;
+        else index = (index >> 4) & 0x0F;
+        uint clutEntry = clutData[index];
+        texColor = unpackColor32(clutEntry);
+    } else {
+        uint addr = (uniforms.texBasePtr + (texCoord.y * uniforms.texBufWidth + texCoord.x) * 4) / 4;
+        if(addr < 1048576) texColor = unpackColor32(gsMemory[addr]);
+        else texColor = float4(1, 0, 1, 1);
+    }
+
+    float4 srcColor;
+    uint texFunc = uniforms.texFunction;
+    if(texFunc == 0) srcColor = texColor * in.color;
+    else if(texFunc == 1) srcColor = texColor;
+    else if(texFunc == 2) {
+        srcColor.rgb = texColor.rgb * in.color.rgb + in.color.aaa;
+        srcColor.a = texColor.a + in.color.a;
+    } else if(texFunc == 3) {
+        srcColor.rgb = texColor.rgb * in.color.rgb + in.color.aaa;
+        srcColor.a = texColor.a;
+    } else srcColor = texColor * in.color;
+
+    if(uniforms.alphaTestEnabled != 0) {
+        if(!alphaTest(srcColor.a, uniforms.alphaFunc, uniforms.alphaRef)) {
+            discard_fragment();
+        }
+    }
+    if(uniforms.fogEnabled != 0) {
+        float fogFactor = in.fog / 255.0;
+        srcColor.rgb = mix(uniforms.fogColor, srcColor.rgb, fogFactor);
+    }
+
+    // PS2 alpha blend: Cv = (A - B) * C + D
+    float3 A, B, D;
+    float C;
+
+    if(uniforms.alphaA == 0) A = srcColor.rgb;
+    else if(uniforms.alphaA == 1) A = destColor.rgb;
+    else A = float3(0);
+
+    if(uniforms.alphaB == 0) B = srcColor.rgb;
+    else if(uniforms.alphaB == 1) B = destColor.rgb;
+    else B = float3(0);
+
+    if(uniforms.alphaC == 0) C = srcColor.a;
+    else if(uniforms.alphaC == 1) C = destColor.a;
+    else C = uniforms.alphaFix;
+
+    if(uniforms.alphaD == 0) D = srcColor.rgb;
+    else if(uniforms.alphaD == 1) D = destColor.rgb;
+    else D = float3(0);
+
+    float3 blendedColor = (A - B) * C + D;
+    return float4(clamp(blendedColor, 0.0, 1.0), srcColor.a);
+}
+
+// ============================================================
 // Present pass - simple texture blit (samples m_presentColorTexture)
 // ============================================================
 struct PresentVertexOut {

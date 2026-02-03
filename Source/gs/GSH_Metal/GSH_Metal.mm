@@ -27,6 +27,32 @@ struct DrawUniforms
 	uint32_t fogEnabled;
 };
 
+// Extended uniforms for framebuffer fetch (PS2 alpha blend)
+struct FBFetchUniforms
+{
+	simd_float2 texSize;
+	simd_float2 screenSize;
+	float alphaFix;
+	uint32_t fbBasePtr;
+	uint32_t fbWidth;
+	uint32_t texBasePtr;
+	uint32_t texBufWidth;
+	uint32_t texPsm;
+	uint32_t clutBasePtr;
+	uint32_t clutPsm;
+	uint32_t alphaRef;
+	uint32_t alphaFunc;
+	uint32_t texFunction;
+	uint32_t alphaTestEnabled;
+	simd_float3 fogColor;
+	uint32_t fogEnabled;
+	// PS2 alpha blend parameters
+	uint32_t alphaA;
+	uint32_t alphaB;
+	uint32_t alphaC;
+	uint32_t alphaD;
+};
+
 // Uniform buffer for present pass
 struct PresentUniforms
 {
@@ -43,7 +69,10 @@ CGSH_Metal::CGSH_Metal()
     , m_library(nil)
     , m_drawPipelineFlat(nil)
     , m_drawPipelineTextured(nil)
+    , m_drawPipelineFlatFBFetch(nil)
+    , m_drawPipelineTexturedFBFetch(nil)
     , m_presentPipeline(nil)
+    , m_supportsFramebufferFetch(false)
     , m_depthStateNever(nil)
     , m_depthStateAlways(nil)
     , m_depthStateGEqual(nil)
@@ -114,6 +143,8 @@ void CGSH_Metal::ReleaseImpl()
 
 	m_drawPipelineFlat = nil;
 	m_drawPipelineTextured = nil;
+	m_drawPipelineFlatFBFetch = nil;
+	m_drawPipelineTexturedFBFetch = nil;
 	m_presentPipeline = nil;
 	m_depthStateNever = nil;
 	m_depthStateAlways = nil;
@@ -191,6 +222,19 @@ void CGSH_Metal::CreateDevice()
 
 	m_commandQueue = [m_device newCommandQueue];
 	assert(m_commandQueue != nil);
+
+	// Check for framebuffer fetch support (Apple GPU family 4+, A11 and later)
+	// This enables accurate PS2 alpha blending without extra render passes
+	m_supportsFramebufferFetch = false;
+	if(@available(iOS 11.0, macOS 10.15, *))
+	{
+		// Apple family 4 = A11 and later (iPhone 8/X and newer)
+		if([m_device supportsFamily:MTLGPUFamilyApple4])
+		{
+			m_supportsFramebufferFetch = true;
+			NSLog(@"[GSH_Metal] Framebuffer fetch supported (Apple GPU family 4+)");
+		}
+	}
 
 	NSLog(@"[GSH_Metal] Using device: %@", m_device.name);
 }
@@ -674,6 +718,51 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
 		if(error) NSLog(@"[GSH_Metal] Draw textured pipeline error: %@", error);
 	}
 
+	// Framebuffer fetch pipelines (A11+ devices) - accurate PS2 alpha blending
+	if(m_supportsFramebufferFetch)
+	{
+		id<MTLFunction> fbFetchFlatFunc = [m_library newFunctionWithName:@"fs_draw_flat_fbfetch"];
+		id<MTLFunction> fbFetchTexturedFunc = [m_library newFunctionWithName:@"fs_draw_textured_fbfetch"];
+
+		if(fbFetchFlatFunc && fbFetchTexturedFunc)
+		{
+			// Flat framebuffer fetch pipeline
+			{
+				MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
+				desc.label = @"GSH_Metal Flat Draw (FB Fetch)";
+				desc.vertexFunction = [m_library newFunctionWithName:@"vs_draw"];
+				desc.fragmentFunction = fbFetchFlatFunc;
+				desc.vertexDescriptor = vertexDesc;
+				desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+				desc.colorAttachments[0].blendingEnabled = NO; // Blending done in shader
+				desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+				m_drawPipelineFlatFBFetch = [m_device newRenderPipelineStateWithDescriptor:desc error:&error];
+				if(error) NSLog(@"[GSH_Metal] Flat FB fetch pipeline error: %@", error);
+			}
+
+			// Textured framebuffer fetch pipeline
+			{
+				MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
+				desc.label = @"GSH_Metal Textured Draw (FB Fetch)";
+				desc.vertexFunction = [m_library newFunctionWithName:@"vs_draw"];
+				desc.fragmentFunction = fbFetchTexturedFunc;
+				desc.vertexDescriptor = vertexDesc;
+				desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+				desc.colorAttachments[0].blendingEnabled = NO; // Blending done in shader
+				desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+				m_drawPipelineTexturedFBFetch = [m_device newRenderPipelineStateWithDescriptor:desc error:&error];
+				if(error) NSLog(@"[GSH_Metal] Textured FB fetch pipeline error: %@", error);
+			}
+
+			NSLog(@"[GSH_Metal] Framebuffer fetch pipelines created successfully");
+		}
+		else
+		{
+			NSLog(@"[GSH_Metal] FB fetch shader functions not found, disabling FB fetch");
+			m_supportsFramebufferFetch = false;
+		}
+	}
+
 	// Present pipeline - samples a texture, no depth
 	{
 		MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
@@ -1031,6 +1120,19 @@ void CGSH_Metal::SetRenderingContext(uint64 primReg)
 	m_alphaD = alpha.nD;
 	m_alphaFix = alpha.nFix;
 
+	// Determine if we need framebuffer fetch for this blend mode
+	// Use FB fetch when blend mode can't be expressed with standard blend factors
+	// (e.g., when destination color is used in a complex way)
+	m_useFramebufferFetch = false;
+	if(m_supportsFramebufferFetch && prim.nAlpha)
+	{
+		// Standard blend: Cs*As + Cd*(1-As) is A=0,B=1,C=0,D=1
+		// If blend mode differs from standard, use FB fetch for accuracy
+		bool isStandardBlend = (m_alphaA == 0 && m_alphaB == 1 && m_alphaC == 0 && m_alphaD == 1);
+		bool isNoBlend = (m_alphaA == 0 && m_alphaB == 0 && m_alphaC == 0 && m_alphaD == 0);
+		m_useFramebufferFetch = !isStandardBlend && !isNoBlend;
+	}
+
 	auto scissor = make_convertible<SCISSOR>(m_nReg[GS_REG_SCISSOR_1 + context]);
 	m_scissorLeft = scissor.scax0;
 	m_scissorTop = scissor.scay0;
@@ -1310,7 +1412,16 @@ void CGSH_Metal::FlushVertices()
 	}
 
 	// Select pipeline (with state tracking)
-	id<MTLRenderPipelineState> desiredPipeline = m_drawIsTextured ? m_drawPipelineTextured : m_drawPipelineFlat;
+	// Use framebuffer fetch pipelines for complex PS2 blend modes on A11+ devices
+	id<MTLRenderPipelineState> desiredPipeline;
+	if(m_useFramebufferFetch && m_drawPipelineFlatFBFetch && m_drawPipelineTexturedFBFetch)
+	{
+		desiredPipeline = m_drawIsTextured ? m_drawPipelineTexturedFBFetch : m_drawPipelineFlatFBFetch;
+	}
+	else
+	{
+		desiredPipeline = m_drawIsTextured ? m_drawPipelineTextured : m_drawPipelineFlat;
+	}
 	if(desiredPipeline != m_boundPipelineState)
 	{
 		[m_frameRenderEncoder setRenderPipelineState:desiredPipeline];
@@ -1378,26 +1489,54 @@ void CGSH_Metal::FlushVertices()
 	// Vertex buffer (use current triple-buffered index)
 	[m_frameRenderEncoder setVertexBuffer:m_vertexBuffers[m_currentBufferIndex] offset:0 atIndex:0];
 
-	// Uniforms
-	DrawUniforms uniforms = {};
-	uniforms.texSize = simd_make_float2(m_texWidth, m_texHeight);
-	uniforms.screenSize = simd_make_float2(m_screenWidth, m_screenHeight);
-	uniforms.alphaFix = (float)m_alphaFix / 128.0f;
-	uniforms.fbBasePtr = m_fbBasePtr;
-	uniforms.fbWidth = m_fbWidth;
-	uniforms.texBasePtr = m_texBasePtr;
-	uniforms.texBufWidth = m_texBufWidth;
-	uniforms.texPsm = m_texPsm;
-	uniforms.clutBasePtr = m_texCLUTPtr;
-	uniforms.clutPsm = m_texCLUTPsm;
-	uniforms.alphaRef = m_alphaTestRef;
-	uniforms.alphaFunc = m_alphaTestEnabled ? m_alphaTestMethod : ALPHA_TEST_ALWAYS;
-	uniforms.texFunction = m_texFunction;
-	uniforms.alphaTestEnabled = m_alphaTestEnabled ? 1 : 0;
-	uniforms.fogColor = simd_make_float3(m_fogR, m_fogG, m_fogB);
-	uniforms.fogEnabled = m_primitiveMode.nFog ? 1 : 0;
-
-	[m_frameRenderEncoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+	// Uniforms - use extended struct for framebuffer fetch
+	if(m_useFramebufferFetch && m_drawPipelineFlatFBFetch)
+	{
+		FBFetchUniforms uniforms = {};
+		uniforms.texSize = simd_make_float2(m_texWidth, m_texHeight);
+		uniforms.screenSize = simd_make_float2(m_screenWidth, m_screenHeight);
+		uniforms.alphaFix = (float)m_alphaFix / 128.0f;
+		uniforms.fbBasePtr = m_fbBasePtr;
+		uniforms.fbWidth = m_fbWidth;
+		uniforms.texBasePtr = m_texBasePtr;
+		uniforms.texBufWidth = m_texBufWidth;
+		uniforms.texPsm = m_texPsm;
+		uniforms.clutBasePtr = m_texCLUTPtr;
+		uniforms.clutPsm = m_texCLUTPsm;
+		uniforms.alphaRef = m_alphaTestRef;
+		uniforms.alphaFunc = m_alphaTestEnabled ? m_alphaTestMethod : ALPHA_TEST_ALWAYS;
+		uniforms.texFunction = m_texFunction;
+		uniforms.alphaTestEnabled = m_alphaTestEnabled ? 1 : 0;
+		uniforms.fogColor = simd_make_float3(m_fogR, m_fogG, m_fogB);
+		uniforms.fogEnabled = m_primitiveMode.nFog ? 1 : 0;
+		// PS2 alpha blend parameters
+		uniforms.alphaA = m_alphaA;
+		uniforms.alphaB = m_alphaB;
+		uniforms.alphaC = m_alphaC;
+		uniforms.alphaD = m_alphaD;
+		[m_frameRenderEncoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+	}
+	else
+	{
+		DrawUniforms uniforms = {};
+		uniforms.texSize = simd_make_float2(m_texWidth, m_texHeight);
+		uniforms.screenSize = simd_make_float2(m_screenWidth, m_screenHeight);
+		uniforms.alphaFix = (float)m_alphaFix / 128.0f;
+		uniforms.fbBasePtr = m_fbBasePtr;
+		uniforms.fbWidth = m_fbWidth;
+		uniforms.texBasePtr = m_texBasePtr;
+		uniforms.texBufWidth = m_texBufWidth;
+		uniforms.texPsm = m_texPsm;
+		uniforms.clutBasePtr = m_texCLUTPtr;
+		uniforms.clutPsm = m_texCLUTPsm;
+		uniforms.alphaRef = m_alphaTestRef;
+		uniforms.alphaFunc = m_alphaTestEnabled ? m_alphaTestMethod : ALPHA_TEST_ALWAYS;
+		uniforms.texFunction = m_texFunction;
+		uniforms.alphaTestEnabled = m_alphaTestEnabled ? 1 : 0;
+		uniforms.fogColor = simd_make_float3(m_fogR, m_fogG, m_fogB);
+		uniforms.fogEnabled = m_primitiveMode.nFog ? 1 : 0;
+		[m_frameRenderEncoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+	}
 
 	if(m_drawIsTextured)
 	{
