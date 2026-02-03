@@ -3,7 +3,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <simd/simd.h>
 #include "../GsPixelFormats.h"
-#include "AppConfig.h"
+#include "app_shared/AppConfig.h"
 #include <algorithm>
 #include <cstring>
 
