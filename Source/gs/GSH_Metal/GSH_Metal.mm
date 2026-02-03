@@ -59,13 +59,17 @@ CGSH_Metal::CGSH_Metal()
     , m_swizzleTablePSMT8(nil)
     , m_presentColorTexture(nil)
     , m_presentDepthTexture(nil)
-    , m_vertexBuffer(nil)
-    , m_drawUniformBuffer(nil)
+    , m_vertexBuffers{nil, nil, nil}
+    , m_currentBufferIndex(0)
+    , m_drawUniformBuffers{nil, nil, nil}
     , m_currentDrawable(nil)
     , m_metalLayer(nil)
     , m_frameCommandBuffer(nil)
     , m_frameRenderEncoder(nil)
     , m_inflightSemaphore(nil)
+    , m_boundPipelineState(nil)
+    , m_boundDepthStencilState(nil)
+    , m_boundScissorRect{0, 0, 0, 0}
 {
 	memset(&m_clutStates, 0, sizeof(m_clutStates));
 	memset(&m_primitiveMode, 0, sizeof(m_primitiveMode));
@@ -126,8 +130,11 @@ void CGSH_Metal::ReleaseImpl()
 	m_swizzleTablePSMT8 = nil;
 	m_presentColorTexture = nil;
 	m_presentDepthTexture = nil;
-	m_vertexBuffer = nil;
-	m_drawUniformBuffer = nil;
+	for(int i = 0; i < MAX_INFLIGHT_FRAMES; i++)
+	{
+		m_vertexBuffers[i] = nil;
+		m_drawUniformBuffers[i] = nil;
+	}
 	m_currentDrawable = nil;
 	m_library = nil;
 	m_commandQueue = nil;
@@ -154,7 +161,12 @@ void CGSH_Metal::ResetImpl()
 	m_drawIsTextured = false;
 	m_primitiveType = PRIM_INVALID;
 	m_frameClearedThisFrame = false;
-	m_gsMemoryDirty = true;
+	m_currentBufferIndex = 0;
+	if(m_vertexBuffers[0])
+	{
+		m_mappedVertices = static_cast<MetalVertex*>([m_vertexBuffers[0] contents]);
+	}
+	MarkAllPagesDirty();
 
 	memset(&m_clutStates, 0, sizeof(m_clutStates));
 	memset(&m_primitiveMode, 0, sizeof(m_primitiveMode));
@@ -193,14 +205,21 @@ void CGSH_Metal::CreateBuffers()
 	m_clutBuffer = [m_device newBufferWithLength:256 * sizeof(uint32_t) * CLUT_CACHE_SIZE
 	                                     options:MTLResourceStorageModeShared];
 
-	// Vertex buffer
-	m_vertexBuffer = [m_device newBufferWithLength:VERTEX_BUFFER_SIZE
-	                                       options:MTLResourceStorageModeShared];
-	m_mappedVertices = static_cast<MetalVertex*>([m_vertexBuffer contents]);
+	// Triple-buffered vertex buffers
+	for(int i = 0; i < MAX_INFLIGHT_FRAMES; i++)
+	{
+		m_vertexBuffers[i] = [m_device newBufferWithLength:VERTEX_BUFFER_SIZE
+		                                           options:MTLResourceStorageModeShared];
+	}
+	m_currentBufferIndex = 0;
+	m_mappedVertices = static_cast<MetalVertex*>([m_vertexBuffers[0] contents]);
 
-	// Uniform buffer for draw calls
-	m_drawUniformBuffer = [m_device newBufferWithLength:sizeof(DrawUniforms)
-	                                            options:MTLResourceStorageModeShared];
+	// Triple-buffered uniform buffers for draw calls
+	for(int i = 0; i < MAX_INFLIGHT_FRAMES; i++)
+	{
+		m_drawUniformBuffers[i] = [m_device newBufferWithLength:sizeof(DrawUniforms)
+		                                                options:MTLResourceStorageModeShared];
+	}
 }
 
 void CGSH_Metal::CreateSwizzleTables()
@@ -767,12 +786,8 @@ void CGSH_Metal::EnsureFrameRenderEncoder()
 
 	if(m_presentColorTexture == nil) return;
 
-	// Upload GS memory once at the start of each encoder (for textured draws)
-	if(m_gsMemoryDirty)
-	{
-		UploadGSMemory();
-		m_gsMemoryDirty = false;
-	}
+	// Upload only dirty GS memory pages (for textured draws)
+	UploadDirtyPages();
 
 	MTLRenderPassDescriptor* renderPass = [MTLRenderPassDescriptor renderPassDescriptor];
 	renderPass.colorAttachments[0].texture = m_presentColorTexture;
@@ -797,6 +812,11 @@ void CGSH_Metal::EnsureFrameRenderEncoder()
 
 	m_frameRenderEncoder = [m_frameCommandBuffer renderCommandEncoderWithDescriptor:renderPass];
 	m_frameRenderEncoder.label = @"GSH_Metal Draw";
+
+	// Reset state tracking for new encoder
+	m_boundPipelineState = nil;
+	m_boundDepthStencilState = nil;
+	m_boundScissorRect = {0, 0, 0, 0};
 }
 
 void CGSH_Metal::EndFrameRenderEncoder()
@@ -1276,10 +1296,15 @@ void CGSH_Metal::FlushVertices()
 		return;
 	}
 
-	// Select pipeline
-	[m_frameRenderEncoder setRenderPipelineState:m_drawIsTextured ? m_drawPipelineTextured : m_drawPipelineFlat];
+	// Select pipeline (with state tracking)
+	id<MTLRenderPipelineState> desiredPipeline = m_drawIsTextured ? m_drawPipelineTextured : m_drawPipelineFlat;
+	if(desiredPipeline != m_boundPipelineState)
+	{
+		[m_frameRenderEncoder setRenderPipelineState:desiredPipeline];
+		m_boundPipelineState = desiredPipeline;
+	}
 
-	// Select depth state
+	// Select depth state (with state tracking)
 	id<MTLDepthStencilState> depthState;
 	if(!m_depthEnabled)
 	{
@@ -1306,9 +1331,13 @@ void CGSH_Metal::FlushVertices()
 			break;
 		}
 	}
-	[m_frameRenderEncoder setDepthStencilState:depthState];
+	if(depthState != m_boundDepthStencilState)
+	{
+		[m_frameRenderEncoder setDepthStencilState:depthState];
+		m_boundDepthStencilState = depthState;
+	}
 
-	// Scissor rect
+	// Scissor rect (with state tracking)
 	uint32 rtWidth = m_presentColorTexture ? (uint32)[m_presentColorTexture width] : m_presentWidth;
 	uint32 rtHeight = m_presentColorTexture ? (uint32)[m_presentColorTexture height] : m_presentHeight;
 
@@ -1323,11 +1352,18 @@ void CGSH_Metal::FlushVertices()
 		scissorRect.height = rtHeight - scissorRect.y;
 	if(scissorRect.width > 0 && scissorRect.height > 0)
 	{
-		[m_frameRenderEncoder setScissorRect:scissorRect];
+		if(scissorRect.x != m_boundScissorRect.x ||
+		   scissorRect.y != m_boundScissorRect.y ||
+		   scissorRect.width != m_boundScissorRect.width ||
+		   scissorRect.height != m_boundScissorRect.height)
+		{
+			[m_frameRenderEncoder setScissorRect:scissorRect];
+			m_boundScissorRect = scissorRect;
+		}
 	}
 
-	// Vertex buffer
-	[m_frameRenderEncoder setVertexBuffer:m_vertexBuffer offset:0 atIndex:0];
+	// Vertex buffer (use current triple-buffered index)
+	[m_frameRenderEncoder setVertexBuffer:m_vertexBuffers[m_currentBufferIndex] offset:0 atIndex:0];
 
 	// Uniforms
 	DrawUniforms uniforms = {};
@@ -1368,6 +1404,116 @@ void CGSH_Metal::UploadGSMemory()
 {
 	if(!m_memoryCache || !m_gsMemoryBuffer) return;
 	memcpy([m_gsMemoryBuffer contents], m_memoryCache, GS_RAM_SIZE);
+}
+
+// ============================================================
+// Dirty page tracking for efficient GS memory uploads
+// ============================================================
+void CGSH_Metal::MarkPagesDirty(uint32 startAddr, uint32 size)
+{
+	if(size == 0) return;
+
+	uint32 startPage = (startAddr & (GS_RAM_SIZE - 1)) / GS_PAGE_SIZE;
+	uint32 endAddr = startAddr + size;
+	uint32 endPage = ((endAddr - 1) & (GS_RAM_SIZE - 1)) / GS_PAGE_SIZE;
+
+	// Handle wrap-around in GS memory
+	if(endPage < startPage)
+	{
+		// Mark from startPage to end
+		for(uint32 p = startPage; p < GS_PAGE_COUNT; p++)
+		{
+			m_dirtyPageBitmap[p / 64] |= (1ULL << (p % 64));
+		}
+		// Mark from beginning to endPage
+		for(uint32 p = 0; p <= endPage; p++)
+		{
+			m_dirtyPageBitmap[p / 64] |= (1ULL << (p % 64));
+		}
+	}
+	else
+	{
+		for(uint32 p = startPage; p <= endPage; p++)
+		{
+			m_dirtyPageBitmap[p / 64] |= (1ULL << (p % 64));
+		}
+	}
+}
+
+void CGSH_Metal::MarkAllPagesDirty()
+{
+	for(int i = 0; i < 8; i++)
+	{
+		m_dirtyPageBitmap[i] = 0xFFFFFFFFFFFFFFFF;
+	}
+}
+
+void CGSH_Metal::ClearDirtyPages()
+{
+	for(int i = 0; i < 8; i++)
+	{
+		m_dirtyPageBitmap[i] = 0;
+	}
+}
+
+bool CGSH_Metal::HasDirtyPages() const
+{
+	for(int i = 0; i < 8; i++)
+	{
+		if(m_dirtyPageBitmap[i] != 0) return true;
+	}
+	return false;
+}
+
+void CGSH_Metal::UploadDirtyPages()
+{
+	if(!m_memoryCache || !m_gsMemoryBuffer) return;
+	if(!HasDirtyPages()) return;
+
+	uint8* dst = static_cast<uint8*>([m_gsMemoryBuffer contents]);
+	uint32 uploadedBytes = 0;
+
+	// Coalesce adjacent dirty pages into single memcpy calls
+	uint32 runStart = GS_PAGE_COUNT;
+	for(uint32 p = 0; p < GS_PAGE_COUNT; p++)
+	{
+		bool isDirty = (m_dirtyPageBitmap[p / 64] & (1ULL << (p % 64))) != 0;
+
+		if(isDirty)
+		{
+			if(runStart == GS_PAGE_COUNT)
+			{
+				runStart = p;
+			}
+		}
+		else
+		{
+			if(runStart != GS_PAGE_COUNT)
+			{
+				// End of a dirty run, copy it
+				uint32 startOffset = runStart * GS_PAGE_SIZE;
+				uint32 runSize = (p - runStart) * GS_PAGE_SIZE;
+				memcpy(dst + startOffset, m_memoryCache + startOffset, runSize);
+				uploadedBytes += runSize;
+				runStart = GS_PAGE_COUNT;
+			}
+		}
+	}
+
+	// Handle final run if it extends to the end
+	if(runStart != GS_PAGE_COUNT)
+	{
+		uint32 startOffset = runStart * GS_PAGE_SIZE;
+		uint32 runSize = (GS_PAGE_COUNT - runStart) * GS_PAGE_SIZE;
+		memcpy(dst + startOffset, m_memoryCache + startOffset, runSize);
+		uploadedBytes += runSize;
+	}
+
+	ClearDirtyPages();
+
+	// Log upload efficiency (commented out for release)
+	// NSLog(@"[GSH_Metal] Uploaded %u bytes of %u total (%.1f%%)",
+	//       uploadedBytes, GS_RAM_SIZE, 100.0f * uploadedBytes / GS_RAM_SIZE);
 }
 
 // ============================================================
@@ -1430,8 +1576,11 @@ void CGSH_Metal::FlipImpl(const DISPLAY_INFO& dispInfo)
 
 	// Reset frame state for next frame
 	m_frameClearedThisFrame = false;
-	m_gsMemoryDirty = true;
 	m_frameCommandBuffer = nil;
+
+	// Cycle to next triple-buffered resources
+	m_currentBufferIndex = (m_currentBufferIndex + 1) % MAX_INFLIGHT_FRAMES;
+	m_mappedVertices = static_cast<MetalVertex*>([m_vertexBuffers[m_currentBufferIndex] contents]);
 
 	CGSHandler::FlipImpl(dispInfo);
 }
@@ -1498,11 +1647,28 @@ void CGSH_Metal::ProcessHostToLocalTransfer()
 	FlushVertices();
 	EndFrameRenderEncoder();
 
+	// Get transfer parameters to determine which pages are affected
+	auto bltBuf = make_convertible<BITBLTBUF>(m_nReg[GS_REG_BITBLTBUF]);
+	auto trxReg = make_convertible<TRXREG>(m_nReg[GS_REG_TRXREG]);
+
 	if(m_pRAM && m_memoryCache)
 	{
 		memcpy(m_memoryCache, m_pRAM, GS_RAM_SIZE);
 	}
-	m_gsMemoryDirty = true;
+
+	// Mark destination region as dirty
+	// Estimate affected size: width * height * bytes per pixel (4 for PSMCT32)
+	uint32 dstPtr = bltBuf.GetDstPtr();
+	uint32 transferSize = trxReg.nRRW * trxReg.nRRH * 4;
+	if(transferSize > 0)
+	{
+		MarkPagesDirty(dstPtr, transferSize);
+	}
+	else
+	{
+		// Fallback: mark all pages dirty if we can't determine the region
+		MarkAllPagesDirty();
+	}
 }
 
 void CGSH_Metal::ProcessLocalToHostTransfer()
@@ -1547,7 +1713,11 @@ void CGSH_Metal::ProcessLocalToLocalTransfer()
 	{
 		memcpy(m_memoryCache, m_pRAM, GS_RAM_SIZE);
 	}
-	m_gsMemoryDirty = true;
+
+	// Mark destination region as dirty
+	uint32 dstPtr = bltBuf.GetDstPtr();
+	uint32 transferSize = trxReg.nRRW * trxReg.nRRH * 4;
+	MarkPagesDirty(dstPtr, transferSize);
 }
 
 void CGSH_Metal::ProcessClutTransfer(uint32 csa, uint32 csm)

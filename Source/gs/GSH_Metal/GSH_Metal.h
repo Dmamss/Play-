@@ -87,11 +87,12 @@ protected:
 	id<MTLTexture> m_presentColorTexture;
 	id<MTLTexture> m_presentDepthTexture;
 
-	// Vertex buffer for primitives
-	id<MTLBuffer> m_vertexBuffer;
+	// Triple-buffered vertex buffers for primitives
+	id<MTLBuffer> m_vertexBuffers[MAX_INFLIGHT_FRAMES];
+	uint32 m_currentBufferIndex;
 
-	// Uniform buffer for draw calls
-	id<MTLBuffer> m_drawUniformBuffer;
+	// Triple-buffered uniform buffers for draw calls
+	id<MTLBuffer> m_drawUniformBuffers[MAX_INFLIGHT_FRAMES];
 
 	// Current drawable
 	id<CAMetalDrawable> m_currentDrawable;
@@ -127,13 +128,17 @@ protected:
 	void* m_swizzleTablePSMT8;
 	void* m_presentColorTexture;
 	void* m_presentDepthTexture;
-	void* m_vertexBuffer;
-	void* m_drawUniformBuffer;
+	void* m_vertexBuffers[3];
+	uint32 m_currentBufferIndex;
+	void* m_drawUniformBuffers[3];
 	void* m_currentDrawable;
 	void* m_metalLayer;
 	void* m_frameCommandBuffer;
 	void* m_frameRenderEncoder;
 	void* m_inflightSemaphore;
+	void* m_boundPipelineState;
+	void* m_boundDepthStencilState;
+	struct { uint64 x, y, width, height; } m_boundScissorRect;
 #endif
 
 private:
@@ -152,6 +157,8 @@ private:
 		MAX_VERTICES = 65536,
 		CLUT_CACHE_SIZE = 32,
 		GS_RAM_SIZE = 0x00400000, // 4MB
+		GS_PAGE_SIZE = 0x2000,    // 8KB per page
+		GS_PAGE_COUNT = GS_RAM_SIZE / GS_PAGE_SIZE, // 512 pages
 		VERTEX_BUFFER_SIZE = MAX_VERTICES * sizeof(MetalVertex),
 		MAX_INFLIGHT_FRAMES = 3,
 	};
@@ -190,6 +197,11 @@ private:
 	void DoPresent(const DISPLAY_INFO&);
 
 	void UploadGSMemory();
+	void UploadDirtyPages();
+	void MarkPagesDirty(uint32 startAddr, uint32 size);
+	void MarkAllPagesDirty();
+	void ClearDirtyPages();
+	bool HasDirtyPages() const;
 
 	// Frame-level encoder management
 	void EnsureFrameCommandBuffer();
@@ -262,7 +274,18 @@ private:
 
 	// Frame tracking
 	bool m_frameClearedThisFrame = false;
-	bool m_gsMemoryDirty = true;
+
+	// GPU state tracking to avoid redundant bindings
+	id<MTLRenderPipelineState> m_boundPipelineState;
+	id<MTLDepthStencilState> m_boundDepthStencilState;
+	MTLScissorRect m_boundScissorRect;
+
+	// Dirty page tracking (512 pages, 8KB each)
+	// Using 8 x 64-bit words = 512 bits for the bitmap
+	uint64 m_dirtyPageBitmap[8] = {0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+	                               0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+	                               0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+	                               0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF};
 
 	CLUTKEY m_clutStates[CLUT_CACHE_SIZE];
 	uint32 m_nextClutCacheIndex = 0;
