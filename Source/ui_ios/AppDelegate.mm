@@ -24,6 +24,14 @@
 	// Initialize CodeGen JIT system with appropriate mode based on iOS version and TXM status
 	[JITInitializer initializeJITSystem];
 
+	// Start async JIT memory allocation as early as possible (if debugger already attached).
+	// On TXM devices (A15+), BreakGetJITMapping triggers a brk #0xf00d trap that blocks
+	// the calling thread — running it async prevents UI freezing.
+	if([jitService isJitActive])
+	{
+		[JITInitializer beginAsyncAllocation];
+	}
+
 	[EmulatorViewController registerPreferences];
 	CGSH_OpenGL::RegisterPreferences();
 	return YES;

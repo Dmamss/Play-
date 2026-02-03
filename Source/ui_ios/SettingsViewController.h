@@ -18,8 +18,27 @@
 	IBOutlet UILabel* frameskipLabel;
 
 	IBOutlet UISwitch* enableAudioOutput;
+	IBOutlet UILabel* audioHandlerName;
+
+	IBOutlet UISwitch* efbAccessSwitch;
+	IBOutlet UISwitch* textureCacheSwitch;
+	IBOutlet UISwitch* gpuSyncSwitch;
+
+	// Advanced Emulation
+	IBOutlet UILabel* eeCycleRateLabel;
+	IBOutlet UISwitch* recompilerSwitch;
+	IBOutlet UISwitch* gsCopiesTextureSwitch;
+	IBOutlet UISwitch* ignoreFormatChangesSwitch;
+	IBOutlet UISwitch* gpuTextureDecodeSwitch;
+	IBOutlet UISwitch* fastDepthSwitch;
+	IBOutlet UISwitch* immediatePresentSwitch;
+	IBOutlet UISwitch* asyncShadersSwitch;
 
 	IBOutlet UISwitch* enableAltServerJIT;
+
+	// Metal renderer options
+	IBOutlet UISwitch* metalAccurateBlendingSwitch;
+	IBOutlet UISwitch* metalPrecompileShadersSwitch;
 
 	IBOutlet UILabel* versionInfoLabel;
 }
@@ -34,6 +53,8 @@
 - (IBAction)selectedGsHandler:(UIStoryboardSegue*)segue;
 - (IBAction)selectedResolutionFactor:(UIStoryboardSegue*)segue;
 - (IBAction)selectedFrameskip:(UIStoryboardSegue*)segue;
+- (IBAction)selectedAudioHandler:(UIStoryboardSegue*)segue;
+- (IBAction)selectedEeCycleRate:(UIStoryboardSegue*)segue;
 - (IBAction)startFullDeviceScan;
 - (IBAction)returnToParent;
 

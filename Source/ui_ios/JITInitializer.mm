@@ -4,6 +4,21 @@
 #import <sys/sysctl.h>
 #import <sys/mman.h>
 
+NSNotificationName const JITMemoryReadyNotification = @"JITMemoryReadyNotification";
+
+/// Readiness tracking
+static dispatch_semaphore_t s_jitReadySemaphore;
+static BOOL s_jitReady = NO;
+static dispatch_once_t s_semaphoreOnce;
+
+static dispatch_semaphore_t GetReadySemaphore()
+{
+	dispatch_once(&s_semaphoreOnce, ^{
+	  s_jitReadySemaphore = dispatch_semaphore_create(0);
+	});
+	return s_jitReadySemaphore;
+}
+
 @implementation JITInitializer
 
 + (BOOL)deviceHasTXM
@@ -23,117 +38,152 @@
 		case 0x6F5129AC: // M2
 		case 0xDC6E3A2A: // M3
 		case 0x041A314C: // M4
-			NSLog(@"[JITInitializer] TXM detected via cpufamily 0x%08X", cpufamily);
 			return YES;
 		default:
-			NSLog(@"[JITInitializer] cpufamily 0x%08X not in known TXM list, trying model fallback", cpufamily);
 			break;
 		}
 	}
 
 	// --- 2. Fallback: detect TXM via hw.machine model identifier ---
-	// TXM is present on A15+ chips. Device model numbers that have TXM:
-	//   iPhone14,x and later (A15+)
-	//   iPad13,x and later (M1/A15+)
-	// Parse the major model number to detect TXM generically.
 	char machine[64] = {0};
 	size_t machsize = sizeof(machine);
 	if(sysctlbyname("hw.machine", machine, &machsize, NULL, 0) == 0)
 	{
-		NSLog(@"[JITInitializer] hw.machine = %s", machine);
-
 		int major = 0;
 		if(sscanf(machine, "iPhone%d", &major) == 1)
 		{
-			// iPhone14,x = A15 (first TXM iPhone)
-			if(major >= 14)
-			{
-				NSLog(@"[JITInitializer] TXM detected via model: iPhone major=%d (>=14)", major);
+			if(major >= 14) // iPhone14,x = A15 (first TXM iPhone)
 				return YES;
-			}
 		}
 		else if(sscanf(machine, "iPad%d", &major) == 1)
 		{
-			// iPad13,x = M1/A15 (first TXM iPads)
-			if(major >= 13)
-			{
-				NSLog(@"[JITInitializer] TXM detected via model: iPad major=%d (>=13)", major);
+			if(major >= 13) // iPad13,x = M1/A15 (first TXM iPads)
 				return YES;
-			}
 		}
 	}
 
-	NSLog(@"[JITInitializer] No TXM detected (cpufamily=0x%08X, machine=%s)", cpufamily, machine);
 	return NO;
 }
 
 + (void)initializeJITSystem
 {
-	NSLog(@"[JITInitializer] Detecting JIT mode...");
-
 	CodeGen::JitType jitType;
 
 	if(@available(iOS 26, *))
 	{
 		BOOL hasTXM = [self deviceHasTXM];
-
-		if(hasTXM)
-		{
-			NSLog(@"[JITInitializer] Configuring JIT: LuckTXM mode (iOS 26+ with TXM)");
-			jitType = CodeGen::JitType::LuckTXM;
-		}
-		else
-		{
-			NSLog(@"[JITInitializer] Configuring JIT: LuckNoTXM mode (iOS 26+ without TXM)");
-			jitType = CodeGen::JitType::LuckNoTXM;
-		}
+		jitType = hasTXM ? CodeGen::JitType::LuckTXM : CodeGen::JitType::LuckNoTXM;
 	}
 	else
 	{
-		NSLog(@"[JITInitializer] Configuring JIT: Legacy mode (iOS < 26)");
 		jitType = CodeGen::JitType::Legacy;
 	}
 
-	// Only set the mode — do NOT allocate memory yet.
-	// For LuckTXM, the debugger must be attached first (via StikDebug).
-	// Call allocateExecutableMemoryIfNeeded after activation.
 	CodeGen::SetJitType(jitType);
-
-	NSLog(@"[JITInitializer] JIT mode configured (allocation deferred)");
 }
 
 + (void)allocateExecutableMemoryIfNeeded
 {
+	if(s_jitReady) return;
+
 	auto jitType = CodeGen::GetJitType();
 
 	if(jitType == CodeGen::JitType::LuckTXM)
 	{
 		if(CodeGen::IsExecutableMemoryRegionAllocated())
 		{
-			NSLog(@"[JITInitializer] Executable memory region already allocated");
+			[self signalReady];
 			return;
 		}
 
-		NSLog(@"[JITInitializer] Allocating 512MB executable memory region via BreakpointJIT...");
+		NSLog(@"[JITInitializer] Allocating LuckTXM executable memory region...");
 		CodeGen::AllocateExecutableMemoryRegion();
 
-		if(CodeGen::IsExecutableMemoryRegionAllocated())
-		{
-			NSLog(@"[JITInitializer] Region allocated: RW=%p RX=%p size=%zu",
-			      CodeGen::GetExecutableMemoryRWBase(),
-			      CodeGen::GetExecutableMemoryRXBase(),
-			      CodeGen::GetExecutableMemoryRegionSize());
-		}
-		else
+		if(!CodeGen::IsExecutableMemoryRegionAllocated())
 		{
 			NSLog(@"[JITInitializer] ERROR: Failed to allocate executable memory region");
+			// Signal ready anyway to unblock waiters (they'll get an error at JIT time)
+			[self signalReady];
+			return;
 		}
+		NSLog(@"[JITInitializer] LuckTXM region allocated successfully");
 	}
 	else if(jitType == CodeGen::JitType::LuckNoTXM)
 	{
-		// Pre-allocate pooled region to avoid per-block mmap/vm_remap syscalls
+		NSLog(@"[JITInitializer] Allocating LuckNoTXM pool...");
 		CodeGen::AllocateNoTxmPool();
+		NSLog(@"[JITInitializer] LuckNoTXM pool allocated");
 	}
+	else
+	{
+		NSLog(@"[JITInitializer] Legacy JIT mode - no pre-allocation needed");
+	}
+
+	[self signalReady];
+}
+
++ (void)beginAsyncAllocation
+{
+	if(s_jitReady)
+	{
+		NSLog(@"[JITInitializer] Already ready, skipping async allocation");
+		return;
+	}
+
+	NSLog(@"[JITInitializer] Starting async JIT memory allocation...");
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	  [self allocateExecutableMemoryIfNeeded];
+	});
+}
+
++ (BOOL)isReady
+{
+	return s_jitReady;
+}
+
++ (BOOL)waitForReadiness:(NSTimeInterval)timeout
+{
+	if(s_jitReady) return YES;
+
+	auto jitType = CodeGen::GetJitType();
+	if(jitType == CodeGen::JitType::Legacy)
+	{
+		// Legacy mode doesn't need pre-allocation
+		[self signalReady];
+		return YES;
+	}
+
+	if(timeout <= 0) return s_jitReady;
+
+	NSLog(@"[JITInitializer] Waiting for JIT readiness (timeout: %.1fs)...", timeout);
+	dispatch_time_t deadline = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC));
+	long result = dispatch_semaphore_wait(GetReadySemaphore(), deadline);
+
+	if(result == 0)
+	{
+		// Re-signal so other waiters also unblock
+		dispatch_semaphore_signal(GetReadySemaphore());
+		NSLog(@"[JITInitializer] JIT ready");
+		return YES;
+	}
+	else
+	{
+		NSLog(@"[JITInitializer] Timed out waiting for JIT readiness");
+		return NO;
+	}
+}
+
++ (void)signalReady
+{
+	if(s_jitReady) return;
+	s_jitReady = YES;
+	dispatch_semaphore_signal(GetReadySemaphore());
+
+	// Post notification (on main thread for UI observers)
+	dispatch_async(dispatch_get_main_queue(), ^{
+	  [[NSNotificationCenter defaultCenter] postNotificationName:JITMemoryReadyNotification object:nil];
+	});
 }
 
 @end

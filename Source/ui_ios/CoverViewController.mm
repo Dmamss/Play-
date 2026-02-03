@@ -137,8 +137,9 @@ static NSString* const reuseIdentifier = @"coverCell";
 	StikDebugJitService* jitService = [StikDebugJitService sharedService];
 	if([jitService isJitActive])
 	{
-		// Debugger already attached (e.g. from previous StikDebug session) — allocate now
-		[JITInitializer allocateExecutableMemoryIfNeeded];
+		// Debugger already attached — begin async allocation if not already started.
+		// AppDelegate also kicks this off, but this is a safety net.
+		[JITInitializer beginAsyncAllocation];
 	}
 	else if([jitService needsActivation])
 	{
@@ -180,23 +181,27 @@ static NSString* const reuseIdentifier = @"coverCell";
 		                                                         style:UIAlertActionStyleDefault
 		                                                       handler:^(UIAlertAction* action) {
 			                                                     [jitService requestActivationWithCompletion:^(BOOL success, NSError* error) {
-				                                                   dispatch_async(dispatch_get_main_queue(), ^{
-					                                                 if(success)
-					                                                 {
-						                                                 // JIT activated — allocate executable memory now that debugger is attached
-						                                                 [JITInitializer allocateExecutableMemoryIfNeeded];
-						                                                 UIAlertController* successAlert = [UIAlertController
-						                                                     alertControllerWithTitle:@"JIT Active"
-						                                                                      message:@"JIT has been activated. You can now play PS2 games!"
-						                                                               preferredStyle:UIAlertControllerStyleAlert];
-						                                                 [successAlert addAction:[UIAlertAction actionWithTitle:@"OK"
-						                                                                                                  style:UIAlertActionStyleDefault
-						                                                                                                handler:nil]];
-						                                                 [self presentViewController:successAlert animated:YES completion:nil];
-					                                                 }
-					                                                 else
-					                                                 {
-						                                                 // Show error
+				                                                   if(success)
+				                                                   {
+					                                                   // JIT activated — begin async allocation (non-blocking)
+					                                                   [JITInitializer beginAsyncAllocation];
+					                                                   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+						                                                 [JITInitializer waitForReadiness:10.0];
+						                                                 dispatch_async(dispatch_get_main_queue(), ^{
+							                                               UIAlertController* successAlert = [UIAlertController
+							                                                   alertControllerWithTitle:@"JIT Active"
+							                                                                    message:@"JIT has been activated. You can now play PS2 games!"
+							                                                             preferredStyle:UIAlertControllerStyleAlert];
+							                                               [successAlert addAction:[UIAlertAction actionWithTitle:@"OK"
+							                                                                                                style:UIAlertActionStyleDefault
+							                                                                                              handler:nil]];
+							                                               [self presentViewController:successAlert animated:YES completion:nil];
+						                                                 });
+					                                                   });
+				                                                   }
+				                                                   else
+				                                                   {
+					                                                   dispatch_async(dispatch_get_main_queue(), ^{
 						                                                 UIAlertController* errorAlert = [UIAlertController
 						                                                     alertControllerWithTitle:@"JIT Activation Failed"
 						                                                                      message:error.localizedDescription
@@ -210,8 +215,8 @@ static NSString* const reuseIdentifier = @"coverCell";
 						                                                                                                style:UIAlertActionStyleCancel
 						                                                                                              handler:nil]];
 						                                                 [self presentViewController:errorAlert animated:YES completion:nil];
-					                                                 }
-				                                                   });
+					                                                   });
+				                                                   }
 			                                                     }];
 		                                                       }];
 		[alert addAction:activateAction];
