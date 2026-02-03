@@ -58,7 +58,7 @@ protected:
 	// Render pipeline states
 	id<MTLRenderPipelineState> m_drawPipelineFlat;
 	id<MTLRenderPipelineState> m_drawPipelineTextured;
-	id<MTLRenderPipelineState> m_drawPipelineFlatFBFetch;    // Framebuffer fetch variant
+	id<MTLRenderPipelineState> m_drawPipelineFlatFBFetch;     // Framebuffer fetch variant
 	id<MTLRenderPipelineState> m_drawPipelineTexturedFBFetch; // Framebuffer fetch variant
 	id<MTLRenderPipelineState> m_presentPipeline;
 	bool m_supportsFramebufferFetch;
