@@ -256,16 +256,25 @@ void CGSH_Metal::CreatePipelineStates()
 {
 	NSError* error = nil;
 
-	// Load the default Metal library (compiled .metal shaders)
-	m_library = [m_device newDefaultLibrary];
+	// Try loading pre-compiled metallib first (fastest startup)
+	NSString* libPath = [[NSBundle mainBundle] pathForResource:@"GSH_MetalShaders" ofType:@"metallib"];
+	if(libPath)
+	{
+		NSURL* libURL = [NSURL fileURLWithPath:libPath];
+		m_library = [m_device newLibraryWithURL:libURL error:&error];
+		if(m_library)
+		{
+			NSLog(@"[GSH_Metal] Loaded pre-compiled metallib");
+		}
+	}
+
+	// Try default library (shaders compiled into app binary)
 	if(!m_library)
 	{
-		// Try loading from a metallib file
-		NSString* libPath = [[NSBundle mainBundle] pathForResource:@"GSH_MetalShaders" ofType:@"metallib"];
-		if(libPath)
+		m_library = [m_device newDefaultLibrary];
+		if(m_library)
 		{
-			NSURL* libURL = [NSURL fileURLWithPath:libPath];
-			m_library = [m_device newLibraryWithURL:libURL error:&error];
+			NSLog(@"[GSH_Metal] Loaded default Metal library");
 		}
 	}
 
@@ -602,6 +611,10 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
 		if(error)
 		{
 			NSLog(@"[GSH_Metal] Shader compilation error: %@", error);
+		}
+		else
+		{
+			NSLog(@"[GSH_Metal] Compiled shaders from source (slower startup)");
 		}
 	}
 
