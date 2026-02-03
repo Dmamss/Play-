@@ -50,5 +50,8 @@ target_include_directories(gsh_metal PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/..
 	${CMAKE_CURRENT_SOURCE_DIR}/../..
 )
+target_include_directories(gsh_metal PRIVATE
+    ${CMAKE_SOURCE_DIR}/Source/app_shared
+)
 
 # Copy metallib to app bundle resources (handled by parent project)
