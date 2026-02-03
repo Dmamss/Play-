@@ -907,8 +907,9 @@ void CGSH_Metal::EnsureFrameRenderEncoder()
 
 	if(m_presentColorTexture == nil) return;
 
-	// Upload only dirty GS memory pages (for textured draws)
-	UploadDirtyPages();
+	// NOTE: Dirty pages are now uploaded in FlushVertices() before each draw,
+	// so we don't need to upload here anymore. This allows us to keep the
+	// encoder open across memory transfers for much better performance.
 
 	MTLRenderPassDescriptor* renderPass = [MTLRenderPassDescriptor renderPassDescriptor];
 	renderPass.colorAttachments[0].texture = m_presentColorTexture;
@@ -1424,6 +1425,14 @@ void CGSH_Metal::FlushVertices()
 {
 	if(m_currentVertex == 0) return;
 
+	// Upload any dirty GS memory pages BEFORE drawing
+	// This is critical for texture data to be up-to-date, especially
+	// since we no longer end the encoder for memory transfers
+	if(HasDirtyPages())
+	{
+		UploadDirtyPages();
+	}
+
 	EnsureFrameRenderEncoder();
 	if(m_frameRenderEncoder == nil)
 	{
@@ -1815,9 +1824,10 @@ void CGSH_Metal::DoPresent(const DISPLAY_INFO& dispInfo)
 // ============================================================
 void CGSH_Metal::ProcessHostToLocalTransfer()
 {
-	// End current encoder since we're modifying GS memory
+	// DON'T end the render encoder here - it causes massive performance loss
+	// (60 encoder recreations per frame). Instead, just mark pages dirty and
+	// let UploadDirtyPages() handle the sync before the next draw.
 	FlushVertices();
-	EndFrameRenderEncoder();
 
 	// Get transfer parameters to determine which pages are affected
 	auto bltBuf = make_convertible<BITBLTBUF>(m_nReg[GS_REG_BITBLTBUF]);
@@ -1853,8 +1863,8 @@ void CGSH_Metal::ProcessLocalToHostTransfer()
 
 void CGSH_Metal::ProcessLocalToLocalTransfer()
 {
+	// DON'T end the render encoder - just flush vertices and mark dirty
 	FlushVertices();
-	EndFrameRenderEncoder();
 
 	if(m_pRAM && m_memoryCache)
 	{
