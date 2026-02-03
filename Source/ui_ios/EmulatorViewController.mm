@@ -20,6 +20,7 @@
 #include "sound/SH_OpenAL/SH_OpenAL.h"
 #include "sound/SH_CoreAudio/SH_CoreAudio.h"
 #include "../ui_shared/StatsManager.h"
+#import "JITInitializer.h"
 
 CPS2VM* g_virtualMachine = nullptr;
 CGSHandler::NewFrameEvent::Connection g_gsNewFrameConnection;
@@ -57,6 +58,16 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS, true);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE, true);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC, false);
+
+	// Advanced emulation options
+	CAppConfig::GetInstance().RegisterPreferenceInteger(PREFERENCE_PS2_EE_CYCLERATE, PREFERENCE_PS2_EE_CYCLERATE_100);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_EMU_RECOMPILER, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_GS_COPIES_TO_TEXTURE, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_IGNORE_FORMAT_CHANGES, false);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_GPU_TEXTURE_DECODE, false);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_FAST_DEPTH, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_IMMEDIATE_PRESENT, false);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREFERENCE_VIDEO_ASYNC_SHADERS, true);
 }
 
 - (void)viewDidLoad
@@ -94,6 +105,45 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 }
 
 - (void)viewDidAppear:(BOOL)animated
+{
+	// Wait for JIT memory allocation to complete before starting emulation.
+	// On TXM devices (A15+), BreakGetJITMapping runs async — we must wait
+	// for it to finish or the JIT recompiler will crash on first code block.
+	if(![JITInitializer isReady])
+	{
+		UIAlertController* jitAlert = [UIAlertController alertControllerWithTitle:@"Preparing JIT"
+		                                                                  message:@"Allocating executable memory..."
+		                                                           preferredStyle:UIAlertControllerStyleAlert];
+
+		UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc]
+		    initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+		[spinner startAnimating];
+
+		UIViewController* spinnerVC = [[UIViewController alloc] init];
+		spinnerVC.preferredContentSize = CGSizeMake(40, 40);
+		[spinnerVC.view addSubview:spinner];
+		[jitAlert setValue:spinnerVC forKey:@"contentViewController"];
+
+		[self presentViewController:jitAlert animated:YES completion:nil];
+
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		  // Wait up to 30 seconds for TXM/NoTXM allocation
+		  [JITInitializer waitForReadiness:30.0];
+
+		  dispatch_async(dispatch_get_main_queue(), ^{
+			[jitAlert dismissViewControllerAnimated:YES
+				                         completion:^{
+					                       [self startEmulation];
+				                         }];
+		  });
+		});
+		return;
+	}
+
+	[self startEmulation];
+}
+
+- (void)startEmulation
 {
 	assert(g_virtualMachine == nullptr);
 	g_virtualMachine = new CPS2VM();

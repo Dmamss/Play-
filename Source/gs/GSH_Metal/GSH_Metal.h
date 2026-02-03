@@ -1,12 +1,12 @@
 #pragma once
 
 #include "../GSHandler.h"
-#include "../GsCachedArea.h"
-#include "../GsTextureCache.h"
+#include "../GsPixelFormats.h"
 
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <dispatch/dispatch.h>
 #else
 typedef void* id;
 #endif
@@ -45,11 +45,21 @@ protected:
 	void FlipImpl(const DISPLAY_INFO&) override;
 	void MarkNewFrame() override;
 	void WriteRegisterImpl(uint8, uint64) override;
-	void BeginTransferWrite() override;
-	void TransferWrite(const uint8*, uint32) override;
 	void SyncCLUT(const TEX0&) override;
 
 	virtual void PresentBackbuffer() = 0;
+
+	// Constants - must be defined before member variables that use them
+	enum
+	{
+		MAX_VERTICES = 65536,
+		CLUT_CACHE_SIZE = 32,
+		GS_RAM_SIZE = 0x00400000,                               // 4MB
+		GS_PAGE_SIZE = 0x2000,                                  // 8KB per page
+		GS_PAGE_COUNT = GS_RAM_SIZE / GS_PAGE_SIZE,             // 512 pages
+		VERTEX_BUFFER_SIZE = MAX_VERTICES * sizeof(float) * 12, // Approximate size
+		MAX_INFLIGHT_FRAMES = 3,
+	};
 
 	// Metal objects - stored as void* for C++ compatibility, cast in .mm
 #ifdef __OBJC__
@@ -60,12 +70,18 @@ protected:
 	// Render pipeline states
 	id<MTLRenderPipelineState> m_drawPipelineFlat;
 	id<MTLRenderPipelineState> m_drawPipelineTextured;
+	id<MTLRenderPipelineState> m_drawPipelineFlatFBFetch;     // Framebuffer fetch variant
+	id<MTLRenderPipelineState> m_drawPipelineTexturedFBFetch; // Framebuffer fetch variant
 	id<MTLRenderPipelineState> m_presentPipeline;
+	bool m_supportsFramebufferFetch;
 
 	// Depth/stencil states
-	id<MTLDepthStencilState> m_depthLessEqual;
-	id<MTLDepthStencilState> m_depthAlways;
-	id<MTLDepthStencilState> m_depthDisabled;
+	id<MTLDepthStencilState> m_depthStateNever;
+	id<MTLDepthStencilState> m_depthStateAlways;
+	id<MTLDepthStencilState> m_depthStateGEqual;
+	id<MTLDepthStencilState> m_depthStateGreater;
+	id<MTLDepthStencilState> m_depthDisabledWrite;
+	id<MTLDepthStencilState> m_depthDisabledNoWrite;
 
 	// Sampler states
 	id<MTLSamplerState> m_samplerNearest;
@@ -74,37 +90,53 @@ protected:
 	// GS memory buffer (4MB)
 	id<MTLBuffer> m_gsMemoryBuffer;
 
-	// CLUT buffer
+	// CLUT buffer (256 entries * 4 bytes per cache slot)
 	id<MTLBuffer> m_clutBuffer;
 
-	// Swizzle table textures
-	id<MTLTexture> m_swizzleTablePSMCT32;
-	id<MTLTexture> m_swizzleTablePSMCT16;
-	id<MTLTexture> m_swizzleTablePSMT8;
-	id<MTLTexture> m_swizzleTablePSMT4;
+	// Swizzle table buffers
+	id<MTLBuffer> m_swizzleTablePSMCT32;
+	id<MTLBuffer> m_swizzleTablePSMCT16;
+	id<MTLBuffer> m_swizzleTablePSMT8;
 
-	// Present textures (render targets for the two display layers)
+	// Present textures (render targets)
 	id<MTLTexture> m_presentColorTexture;
 	id<MTLTexture> m_presentDepthTexture;
 
-	// Vertex buffer for primitives
-	id<MTLBuffer> m_vertexBuffer;
+	// Triple-buffered vertex buffers for primitives
+	id<MTLBuffer> m_vertexBuffers[MAX_INFLIGHT_FRAMES];
+	uint32 m_currentBufferIndex;
+
+	// Triple-buffered uniform buffers for draw calls
+	id<MTLBuffer> m_drawUniformBuffers[MAX_INFLIGHT_FRAMES];
 
 	// Current drawable
 	id<CAMetalDrawable> m_currentDrawable;
 
 	// Presentation params
 	CAMetalLayer* m_metalLayer;
+
+	// Frame-level command buffer and render encoder (1 per frame, not per draw)
+	id<MTLCommandBuffer> m_frameCommandBuffer;
+	id<MTLRenderCommandEncoder> m_frameRenderEncoder;
+
+	// Triple-buffering semaphore
+	dispatch_semaphore_t m_inflightSemaphore;
 #else
 	void* m_device;
 	void* m_commandQueue;
 	void* m_library;
 	void* m_drawPipelineFlat;
 	void* m_drawPipelineTextured;
+	void* m_drawPipelineFlatFBFetch;
+	void* m_drawPipelineTexturedFBFetch;
 	void* m_presentPipeline;
-	void* m_depthLessEqual;
-	void* m_depthAlways;
-	void* m_depthDisabled;
+	bool m_supportsFramebufferFetch;
+	void* m_depthStateNever;
+	void* m_depthStateAlways;
+	void* m_depthStateGEqual;
+	void* m_depthStateGreater;
+	void* m_depthDisabledWrite;
+	void* m_depthDisabledNoWrite;
 	void* m_samplerNearest;
 	void* m_samplerBilinear;
 	void* m_gsMemoryBuffer;
@@ -112,12 +144,22 @@ protected:
 	void* m_swizzleTablePSMCT32;
 	void* m_swizzleTablePSMCT16;
 	void* m_swizzleTablePSMT8;
-	void* m_swizzleTablePSMT4;
 	void* m_presentColorTexture;
 	void* m_presentDepthTexture;
-	void* m_vertexBuffer;
+	void* m_vertexBuffers[3];
+	uint32 m_currentBufferIndex;
+	void* m_drawUniformBuffers[3];
 	void* m_currentDrawable;
 	void* m_metalLayer;
+	void* m_frameCommandBuffer;
+	void* m_frameRenderEncoder;
+	void* m_inflightSemaphore;
+	void* m_boundPipelineState;
+	void* m_boundDepthStencilState;
+	struct
+	{
+		uint64 x, y, width, height;
+	} m_boundScissorRect;
 #endif
 
 private:
@@ -125,17 +167,10 @@ private:
 	struct MetalVertex
 	{
 		float position[4]; // x, y, z, w
-		float texcoord[2]; // s, t
+		float texcoord[2]; // u, v
 		float color[4];    // r, g, b, a
 		float fog;
-	};
-
-	enum
-	{
-		MAX_VERTICES = 65536,
-		CLUT_CACHE_SIZE = 32,
-		GS_RAM_SIZE = 0x00400000, // 4MB
-		VERTEX_BUFFER_SIZE = MAX_VERTICES * sizeof(MetalVertex),
+		float padding;
 	};
 
 	struct CLUTKEY
@@ -156,6 +191,7 @@ private:
 	void CreateBuffers();
 	void CreateSwizzleTables();
 	void CreatePresentRenderTargets(uint32 width, uint32 height);
+	void PrecompileShaders();
 
 	void ProcessPrim(uint64);
 	void VertexKick(uint8, uint64);
@@ -166,10 +202,25 @@ private:
 	void Prim_Triangle();
 	void Prim_Sprite();
 
+	void EmitVertex(const VERTEX& vtx, float screenW, float screenH);
+
 	void FlushVertices();
 	void DoPresent(const DISPLAY_INFO&);
 
 	void UploadGSMemory();
+	void UploadDirtyPages();
+	void MarkPagesDirty(uint32 startAddr, uint32 size);
+	void MarkAllPagesDirty();
+	void ClearDirtyPages();
+	bool HasDirtyPages() const;
+
+	// Frame-level encoder management
+	void EnsureFrameCommandBuffer();
+	void EnsureFrameRenderEncoder();
+	void EndFrameRenderEncoder();
+
+	CLUTKEY MakeCachedClutKey(const TEX0&) const;
+	int32 FindCachedClut(const CLUTKEY&) const;
 
 	// Draw context
 	VERTEX m_vtxBuffer[3];
@@ -179,15 +230,22 @@ private:
 	uint32 m_primitiveType = 0;
 	PRMODE m_primitiveMode;
 	uint32 m_fbBasePtr = 0;
+	uint32 m_fbWidth = 0;
 	float m_primOfsX = 0;
 	float m_primOfsY = 0;
+	uint32 m_texBasePtr = 0;
+	uint32 m_texBufWidth = 0;
 	uint32 m_texWidth = 0;
 	uint32 m_texHeight = 0;
-	std::vector<uint8> m_xferBuffer;
+	uint32 m_texPsm = 0;
+	uint32 m_texCLUTPtr = 0;
+	uint32 m_texCLUTPsm = 0;
+	uint32 m_texFunction = 0;
 
 	// Vertex accumulation
 	MetalVertex* m_mappedVertices = nullptr;
 	uint32 m_currentVertex = 0;
+	bool m_drawIsTextured = false;
 
 	// Memory cache
 	uint8* m_memoryCache = nullptr;
@@ -196,9 +254,52 @@ private:
 	uint32 m_presentWidth = 0;
 	uint32 m_presentHeight = 0;
 
-	bool m_depthTestingEnabled = true;
-	bool m_alphaBlendingEnabled = true;
-	bool m_alphaTestingEnabled = true;
+	// Rendering state from GS registers
+	uint32 m_depthTestMethod = DEPTH_TEST_ALWAYS;
+	bool m_depthWriteEnabled = true;
+	bool m_depthEnabled = false;
+	uint32 m_alphaTestMethod = ALPHA_TEST_ALWAYS;
+	uint32 m_alphaTestRef = 0;
+	uint32 m_alphaTestFail = ALPHA_TEST_FAIL_KEEP;
+	bool m_alphaTestEnabled = false;
+	uint32 m_scissorLeft = 0;
+	uint32 m_scissorTop = 0;
+	uint32 m_scissorRight = 0;
+	uint32 m_scissorBottom = 0;
+
+	// Alpha blending
+	uint32 m_alphaA = 0;
+	uint32 m_alphaB = 0;
+	uint32 m_alphaC = 0;
+	uint32 m_alphaD = 0;
+	uint32 m_alphaFix = 0;
+	bool m_useFramebufferFetch = false;     // True when blend mode requires FB fetch
+	bool m_accurateBlendingEnabled = true;  // User preference for accurate PS2 blending
+	bool m_precompileShadersEnabled = true; // User preference for shader pre-compilation
+
+	// Fog
+	float m_fogR = 0;
+	float m_fogG = 0;
+	float m_fogB = 0;
+
+	// Screen dimensions (from display register)
+	float m_screenWidth = 640.0f;
+	float m_screenHeight = 448.0f;
+
+	// Frame tracking
+	bool m_frameClearedThisFrame = false;
+
+	// GPU state tracking to avoid redundant bindings
+	id<MTLRenderPipelineState> m_boundPipelineState;
+	id<MTLDepthStencilState> m_boundDepthStencilState;
+	MTLScissorRect m_boundScissorRect;
+
+	// Dirty page tracking (512 pages, 8KB each)
+	// Using 8 x 64-bit words = 512 bits for the bitmap
+	uint64 m_dirtyPageBitmap[8] = {0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+	                               0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+	                               0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+	                               0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF};
 
 	CLUTKEY m_clutStates[CLUT_CACHE_SIZE];
 	uint32 m_nextClutCacheIndex = 0;
