@@ -42,6 +42,9 @@
 #define PREFERENCE_VIDEO_TEXTURE_CACHE "video.texturecache"
 #define PREFERENCE_VIDEO_GPU_SYNC "video.gpusync"
 
+// Metal renderer options
+#define PREFERENCE_VIDEO_METAL_ACCURATE_BLENDING "video.metal.accurateblending"
+
 #define PREFERENCE_ALTSTORE_JIT_ENABLED "altstore.jit.enabled"
 // iOS 26+ StikDebug JIT activation
 #define PREFERENCE_STIKDEBUG_JIT_ENABLED "stikdebug.jit.enabled"

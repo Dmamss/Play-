@@ -271,7 +271,8 @@ private:
 	uint32 m_alphaC = 0;
 	uint32 m_alphaD = 0;
 	uint32 m_alphaFix = 0;
-	bool m_useFramebufferFetch = false; // True when blend mode requires FB fetch
+	bool m_useFramebufferFetch = false;    // True when blend mode requires FB fetch
+	bool m_accurateBlendingEnabled = true; // User preference for accurate PS2 blending
 
 	// Fog
 	float m_fogR = 0;

@@ -36,6 +36,9 @@
 
 	IBOutlet UISwitch* enableAltServerJIT;
 
+	// Metal renderer options
+	IBOutlet UISwitch* metalAccurateBlendingSwitch;
+
 	IBOutlet UILabel* versionInfoLabel;
 }
 

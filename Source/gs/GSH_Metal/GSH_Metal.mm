@@ -3,8 +3,12 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <simd/simd.h>
 #include "../GsPixelFormats.h"
-#include <cstring>
+#include "AppConfig.h"
 #include <algorithm>
+#include <cstring>
+
+// Metal-specific preference keys (matches ui_ios/PreferenceDefs.h)
+#define PREF_METAL_ACCURATE_BLENDING "video.metal.accurateblending"
 
 // Uniform buffer for draw calls
 struct DrawUniforms
@@ -129,6 +133,9 @@ void CGSH_Metal::InitializeImpl()
 
 	m_memoryCache = new uint8[GS_RAM_SIZE];
 	memset(m_memoryCache, 0, GS_RAM_SIZE);
+
+	// Read user preferences
+	m_accurateBlendingEnabled = CAppConfig::GetInstance().GetPreferenceBoolean(PREF_METAL_ACCURATE_BLENDING);
 }
 
 void CGSH_Metal::ReleaseImpl()
@@ -213,6 +220,9 @@ void CGSH_Metal::ResetImpl()
 void CGSH_Metal::NotifyPreferencesChangedImpl()
 {
 	CGSHandler::NotifyPreferencesChangedImpl();
+
+	// Read Metal-specific preferences
+	m_accurateBlendingEnabled = CAppConfig::GetInstance().GetPreferenceBoolean(PREF_METAL_ACCURATE_BLENDING);
 }
 
 void CGSH_Metal::CreateDevice()
@@ -1123,8 +1133,9 @@ void CGSH_Metal::SetRenderingContext(uint64 primReg)
 	// Determine if we need framebuffer fetch for this blend mode
 	// Use FB fetch when blend mode can't be expressed with standard blend factors
 	// (e.g., when destination color is used in a complex way)
+	// Only enabled if hardware supports it AND user has enabled accurate blending
 	m_useFramebufferFetch = false;
-	if(m_supportsFramebufferFetch && prim.nAlpha)
+	if(m_supportsFramebufferFetch && m_accurateBlendingEnabled && prim.nAlpha)
 	{
 		// Standard blend: Cs*As + Cd*(1-As) is A=0,B=1,C=0,D=1
 		// If blend mode differs from standard, use FB fetch for accuracy

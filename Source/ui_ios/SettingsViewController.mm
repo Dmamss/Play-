@@ -115,6 +115,9 @@
 
 	[enableAltServerJIT setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_ALTSTORE_JIT_ENABLED)];
 
+	// Metal renderer options (default to ON for best quality)
+	[metalAccurateBlendingSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_METAL_ACCURATE_BLENDING)];
+
 	NSString* versionString = [NSString stringWithFormat:@"%s - %s", PLAY_VERSION, __DATE__];
 	versionInfoLabel.text = versionString;
 }
@@ -149,6 +152,9 @@
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_ASYNC_SHADERS, asyncShadersSwitch.isOn);
 
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_ALTSTORE_JIT_ENABLED, enableAltServerJIT.isOn);
+
+	// Metal renderer options
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_METAL_ACCURATE_BLENDING, metalAccurateBlendingSwitch.isOn);
 
 	CAppConfig::GetInstance().Save();
 
