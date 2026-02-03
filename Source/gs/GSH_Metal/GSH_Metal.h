@@ -49,6 +49,18 @@ protected:
 
 	virtual void PresentBackbuffer() = 0;
 
+	// Constants - must be defined before member variables that use them
+	enum
+	{
+		MAX_VERTICES = 65536,
+		CLUT_CACHE_SIZE = 32,
+		GS_RAM_SIZE = 0x00400000,                               // 4MB
+		GS_PAGE_SIZE = 0x2000,                                  // 8KB per page
+		GS_PAGE_COUNT = GS_RAM_SIZE / GS_PAGE_SIZE,             // 512 pages
+		VERTEX_BUFFER_SIZE = MAX_VERTICES * sizeof(float) * 12, // Approximate size
+		MAX_INFLIGHT_FRAMES = 3,
+	};
+
 	// Metal objects - stored as void* for C++ compatibility, cast in .mm
 #ifdef __OBJC__
 	id<MTLDevice> m_device;
@@ -159,17 +171,6 @@ private:
 		float color[4];    // r, g, b, a
 		float fog;
 		float padding;
-	};
-
-	enum
-	{
-		MAX_VERTICES = 65536,
-		CLUT_CACHE_SIZE = 32,
-		GS_RAM_SIZE = 0x00400000,                   // 4MB
-		GS_PAGE_SIZE = 0x2000,                      // 8KB per page
-		GS_PAGE_COUNT = GS_RAM_SIZE / GS_PAGE_SIZE, // 512 pages
-		VERTEX_BUFFER_SIZE = MAX_VERTICES * sizeof(MetalVertex),
-		MAX_INFLIGHT_FRAMES = 3,
 	};
 
 	struct CLUTKEY

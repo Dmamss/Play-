@@ -243,8 +243,9 @@ void CGSH_Metal::CreateDevice()
 
 	// Check for framebuffer fetch support (Apple GPU family 4+, A11 and later)
 	// This enables accurate PS2 alpha blending without extra render passes
+	// Note: supportsFamily: requires iOS 13.0+
 	m_supportsFramebufferFetch = false;
-	if(@available(iOS 11.0, macOS 10.15, *))
+	if(@available(iOS 13.0, macOS 10.15, *))
 	{
 		// Apple family 4 = A11 and later (iPhone 8/X and newer)
 		if([m_device supportsFamily:MTLGPUFamilyApple4])
