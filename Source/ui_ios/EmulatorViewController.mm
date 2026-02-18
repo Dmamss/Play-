@@ -172,12 +172,18 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 	[contentVC.view addSubview:statusLabel];
 
 	[NSLayoutConstraint activateConstraints:@[
-		[progressView.leadingAnchor constraintEqualToAnchor:contentVC.view.leadingAnchor constant:10],
-		[progressView.trailingAnchor constraintEqualToAnchor:contentVC.view.trailingAnchor constant:-10],
-		[progressView.topAnchor constraintEqualToAnchor:contentVC.view.topAnchor constant:10],
-		[statusLabel.leadingAnchor constraintEqualToAnchor:contentVC.view.leadingAnchor constant:10],
-		[statusLabel.trailingAnchor constraintEqualToAnchor:contentVC.view.trailingAnchor constant:-10],
-		[statusLabel.topAnchor constraintEqualToAnchor:progressView.bottomAnchor constant:8],
+		[progressView.leadingAnchor constraintEqualToAnchor:contentVC.view.leadingAnchor
+		                                           constant:10],
+		[progressView.trailingAnchor constraintEqualToAnchor:contentVC.view.trailingAnchor
+		                                            constant:-10],
+		[progressView.topAnchor constraintEqualToAnchor:contentVC.view.topAnchor
+		                                       constant:10],
+		[statusLabel.leadingAnchor constraintEqualToAnchor:contentVC.view.leadingAnchor
+		                                          constant:10],
+		[statusLabel.trailingAnchor constraintEqualToAnchor:contentVC.view.trailingAnchor
+		                                           constant:-10],
+		[statusLabel.topAnchor constraintEqualToAnchor:progressView.bottomAnchor
+		                                      constant:8],
 	]];
 
 	[jitAlert setValue:contentVC forKey:@"contentViewController"];
@@ -195,12 +201,12 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 	// Start waiting for JIT on background thread
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 	  BOOL success = [JITInitializer waitForJITWithTimeout:120.0 // 2 minutes
-	                                        progressBlock:^(float progress, NSString* status) {
-		                                      dispatch_async(dispatch_get_main_queue(), ^{
-			                                    [progressView setProgress:progress animated:YES];
-			                                    statusLabel.text = status;
-		                                      });
-	                                        }];
+		                                     progressBlock:^(float progress, NSString* status) {
+			                                   dispatch_async(dispatch_get_main_queue(), ^{
+				                                 [progressView setProgress:progress animated:YES];
+				                                 statusLabel.text = status;
+			                                   });
+		                                     }];
 
 	  dispatch_async(dispatch_get_main_queue(), ^{
 		[jitAlert dismissViewControllerAnimated:YES
