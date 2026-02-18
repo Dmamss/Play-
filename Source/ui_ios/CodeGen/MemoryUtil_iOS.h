@@ -53,4 +53,13 @@ namespace CodeGen
 	/// Get the size of the pre-allocated region.
 	size_t GetExecutableMemoryRegionSize();
 
+	/// Wait for debugger (StikDebug) to attach. For TXM devices.
+	/// @param timeout_ms Maximum time to wait in milliseconds
+	/// @return true if debugger attached within timeout
+	bool WaitForDebuggerAttach(uint32_t timeout_ms);
+
+	/// Check if debugger (StikDebug) is currently attached.
+	/// @return true if CS_DEBUGGED flag is set
+	bool IsDebuggerAttached();
+
 } // namespace CodeGen

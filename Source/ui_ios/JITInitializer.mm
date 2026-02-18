@@ -11,6 +11,9 @@ static dispatch_semaphore_t s_jitReadySemaphore;
 static BOOL s_jitReady = NO;
 static dispatch_once_t s_semaphoreOnce;
 
+/// Track if TXM allocation failed (StikDebug not attached)
+static BOOL s_txmAllocationFailed = NO;
+
 static dispatch_semaphore_t GetReadySemaphore()
 {
 	dispatch_once(&s_semaphoreOnce, ^{
@@ -101,11 +104,12 @@ static dispatch_semaphore_t GetReadySemaphore()
 
 		if(!CodeGen::IsExecutableMemoryRegionAllocated())
 		{
-			// TXM allocation failed (StikDebug not attached or BreakpointJIT failed)
-			// Fall back to Legacy mode - JIT blocks will use vm_allocate/vm_protect
-			NSLog(@"[JITInitializer] WARNING: TXM allocation failed, falling back to Legacy mode");
-			CodeGen::SetJitType(CodeGen::JitType::Legacy);
-			[self signalReady];
+			// TXM allocation failed - StikDebug not attached or BreakpointJIT failed
+			// On TXM devices, there's NO fallback - Legacy won't work!
+			// Mark as failed so UI can show error to user
+			NSLog(@"[JITInitializer] ERROR: TXM allocation failed - StikDebug not attached?");
+			s_txmAllocationFailed = YES;
+			[self signalReady]; // Signal ready so UI can check and show error
 			return;
 		}
 		NSLog(@"[JITInitializer] LuckTXM region allocated successfully");
@@ -187,6 +191,178 @@ static dispatch_semaphore_t GetReadySemaphore()
 	dispatch_async(dispatch_get_main_queue(), ^{
 	  [[NSNotificationCenter defaultCenter] postNotificationName:JITMemoryReadyNotification object:nil];
 	});
+}
+
++ (BOOL)requiresTXM
+{
+	if(@available(iOS 26, *))
+	{
+		return [self deviceHasTXM];
+	}
+	return NO;
+}
+
++ (BOOL)isJITAvailable
+{
+	if(!s_jitReady) return NO;
+
+	auto jitType = CodeGen::GetJitType();
+
+	if(jitType == CodeGen::JitType::LuckTXM)
+	{
+		// TXM requires StikDebug - check if allocation succeeded
+		return CodeGen::IsExecutableMemoryRegionAllocated() && !s_txmAllocationFailed;
+	}
+	else if(jitType == CodeGen::JitType::LuckNoTXM)
+	{
+		// NoTXM can work with per-block fallback, always available
+		return YES;
+	}
+	else
+	{
+		// Legacy mode - available on older iOS
+		return YES;
+	}
+}
+
++ (NSString*)jitUnavailableReason
+{
+	if(!s_jitReady)
+	{
+		return @"JIT system not initialized";
+	}
+
+	if([self isJITAvailable])
+	{
+		return nil; // JIT is available, no error
+	}
+
+	auto jitType = CodeGen::GetJitType();
+
+	if(jitType == CodeGen::JitType::LuckTXM && s_txmAllocationFailed)
+	{
+		return @"JIT requires StikDebug on this device.\n\n"
+		       @"This device has a TXM chip (A15 or newer) running iOS 26+, "
+		       @"which requires StikDebug to enable JIT.\n\n"
+		       @"Please:\n"
+		       @"1. Install StikDebug (v2.3.0+)\n"
+		       @"2. Launch StikDebug and enable JIT for Play!\n"
+		       @"3. Return to Play!";
+	}
+
+	return @"JIT is not available on this device configuration";
+}
+
++ (BOOL)isDebuggerAttached
+{
+	return CodeGen::IsDebuggerAttached();
+}
+
++ (BOOL)waitForJITWithTimeout:(NSTimeInterval)timeout
+                progressBlock:(void (^)(float progress, NSString* status))progressBlock
+{
+	auto jitType = CodeGen::GetJitType();
+
+	// Non-TXM modes don't need to wait for debugger
+	if(jitType != CodeGen::JitType::LuckTXM)
+	{
+		if(progressBlock)
+		{
+			progressBlock(1.0f, @"JIT Ready");
+		}
+		[self allocateExecutableMemoryIfNeeded];
+		return [self isJITAvailable];
+	}
+
+	// TXM mode - need to wait for StikDebug to attach
+	NSLog(@"[JITInitializer] Waiting for StikDebug to attach (timeout: %.1fs)...", timeout);
+
+	if(progressBlock)
+	{
+		progressBlock(0.0f, @"Waiting for StikDebug...");
+	}
+
+	// Poll for debugger attachment with progress updates
+	NSTimeInterval startTime = [[NSDate date] timeIntervalSince1970];
+	NSTimeInterval checkInterval = 0.5; // Check every 500ms
+	int iteration = 0;
+
+	while(true)
+	{
+		// Check if debugger is attached
+		if(CodeGen::IsDebuggerAttached())
+		{
+			NSLog(@"[JITInitializer] StikDebug attached! Allocating JIT memory...");
+
+			if(progressBlock)
+			{
+				progressBlock(0.9f, @"Allocating JIT memory...");
+			}
+
+			// Debugger attached - now allocate the JIT region
+			[self allocateExecutableMemoryIfNeeded];
+
+			if(CodeGen::IsExecutableMemoryRegionAllocated())
+			{
+				NSLog(@"[JITInitializer] JIT memory allocated successfully");
+				if(progressBlock)
+				{
+					progressBlock(1.0f, @"JIT Ready!");
+				}
+				return YES;
+			}
+			else
+			{
+				NSLog(@"[JITInitializer] JIT memory allocation failed");
+				if(progressBlock)
+				{
+					progressBlock(1.0f, @"Allocation failed");
+				}
+				return NO;
+			}
+		}
+
+		// Check timeout
+		NSTimeInterval elapsed = [[NSDate date] timeIntervalSince1970] - startTime;
+		if(elapsed >= timeout)
+		{
+			NSLog(@"[JITInitializer] Timeout waiting for StikDebug");
+			s_txmAllocationFailed = YES;
+			[self signalReady];
+			return NO;
+		}
+
+		// Update progress
+		if(progressBlock)
+		{
+			float progress = (float)(elapsed / timeout) * 0.8f; // Cap at 80% while waiting
+			NSString* status;
+			switch(iteration % 4)
+			{
+			case 0:
+				status = @"Waiting for StikDebug...";
+				break;
+			case 1:
+				status = @"Open StikDebug app";
+				break;
+			case 2:
+				status = @"Enable JIT for Play!";
+				break;
+			case 3:
+				status = @"Then return here";
+				break;
+			default:
+				status = @"Waiting...";
+				break;
+			}
+			progressBlock(progress, status);
+		}
+
+		iteration++;
+
+		// Wait before next check
+		[NSThread sleepForTimeInterval:checkInterval];
+	}
 }
 
 @end

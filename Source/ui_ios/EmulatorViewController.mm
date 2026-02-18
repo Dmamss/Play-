@@ -99,37 +99,155 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 
 - (void)viewDidAppear:(BOOL)animated
 {
-	// Wait for JIT memory allocation to complete before starting emulation.
-	// On TXM devices (A15+), BreakGetJITMapping runs async — we must wait
-	// for it to finish or the JIT recompiler will crash on first code block.
-	if(![JITInitializer isReady])
+	// Check if JIT is already available (non-TXM devices or debugger already attached)
+	if([JITInitializer isReady] && [JITInitializer isJITAvailable])
 	{
-		UIAlertController* jitAlert = [UIAlertController alertControllerWithTitle:@"Preparing JIT"
-		                                                                  message:@"Allocating executable memory..."
-		                                                           preferredStyle:UIAlertControllerStyleAlert];
+		[self startEmulation];
+		return;
+	}
 
-		UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc]
-		    initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-		[spinner startAnimating];
+	// Check if this is a TXM device that needs StikDebug
+	if([JITInitializer requiresTXM])
+	{
+		[self showWaitingForJITScreen];
+	}
+	else
+	{
+		// Non-TXM: just allocate and proceed
+		[self showAllocatingJITScreen];
+	}
+}
 
-		UIViewController* spinnerVC = [[UIViewController alloc] init];
-		spinnerVC.preferredContentSize = CGSizeMake(40, 40);
-		[spinnerVC.view addSubview:spinner];
-		[jitAlert setValue:spinnerVC forKey:@"contentViewController"];
+- (void)showAllocatingJITScreen
+{
+	UIAlertController* jitAlert = [UIAlertController alertControllerWithTitle:@"Preparing JIT"
+	                                                                  message:@"Allocating executable memory..."
+	                                                           preferredStyle:UIAlertControllerStyleAlert];
 
-		[self presentViewController:jitAlert animated:YES completion:nil];
+	UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc]
+	    initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+	[spinner startAnimating];
 
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		  // Wait up to 30 seconds for TXM/NoTXM allocation
-		  [JITInitializer waitForReadiness:30.0];
+	UIViewController* spinnerVC = [[UIViewController alloc] init];
+	spinnerVC.preferredContentSize = CGSizeMake(40, 40);
+	[spinnerVC.view addSubview:spinner];
+	[jitAlert setValue:spinnerVC forKey:@"contentViewController"];
 
-		  dispatch_async(dispatch_get_main_queue(), ^{
-			[jitAlert dismissViewControllerAnimated:YES
-				                         completion:^{
+	[self presentViewController:jitAlert animated:YES completion:nil];
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	  [JITInitializer allocateExecutableMemoryIfNeeded];
+
+	  dispatch_async(dispatch_get_main_queue(), ^{
+		[jitAlert dismissViewControllerAnimated:YES
+			                         completion:^{
+				                       [self checkJITAndStartEmulation];
+			                         }];
+	  });
+	});
+}
+
+- (void)showWaitingForJITScreen
+{
+	// Create alert with progress indicator for TXM devices
+	UIAlertController* jitAlert = [UIAlertController alertControllerWithTitle:@"Waiting for JIT"
+	                                                                  message:@"Open StikDebug and enable JIT for Play!\n\n"
+	                                                                          @"This device requires StikDebug to enable JIT compilation."
+	                                                           preferredStyle:UIAlertControllerStyleAlert];
+
+	// Add a progress view
+	UIProgressView* progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+	progressView.translatesAutoresizingMaskIntoConstraints = NO;
+
+	UILabel* statusLabel = [[UILabel alloc] init];
+	statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+	statusLabel.textAlignment = NSTextAlignmentCenter;
+	statusLabel.font = [UIFont systemFontOfSize:12];
+	statusLabel.textColor = [UIColor secondaryLabelColor];
+	statusLabel.text = @"Waiting for StikDebug...";
+
+	UIViewController* contentVC = [[UIViewController alloc] init];
+	contentVC.preferredContentSize = CGSizeMake(250, 50);
+	[contentVC.view addSubview:progressView];
+	[contentVC.view addSubview:statusLabel];
+
+	[NSLayoutConstraint activateConstraints:@[
+		[progressView.leadingAnchor constraintEqualToAnchor:contentVC.view.leadingAnchor constant:10],
+		[progressView.trailingAnchor constraintEqualToAnchor:contentVC.view.trailingAnchor constant:-10],
+		[progressView.topAnchor constraintEqualToAnchor:contentVC.view.topAnchor constant:10],
+		[statusLabel.leadingAnchor constraintEqualToAnchor:contentVC.view.leadingAnchor constant:10],
+		[statusLabel.trailingAnchor constraintEqualToAnchor:contentVC.view.trailingAnchor constant:-10],
+		[statusLabel.topAnchor constraintEqualToAnchor:progressView.bottomAnchor constant:8],
+	]];
+
+	[jitAlert setValue:contentVC forKey:@"contentViewController"];
+
+	// Add cancel button
+	UIAlertAction* cancelAction = [UIAlertAction actionWithTitle:@"Cancel"
+	                                                       style:UIAlertActionStyleCancel
+	                                                     handler:^(UIAlertAction* action) {
+		                                                   [self.navigationController popViewControllerAnimated:YES];
+	                                                     }];
+	[jitAlert addAction:cancelAction];
+
+	[self presentViewController:jitAlert animated:YES completion:nil];
+
+	// Start waiting for JIT on background thread
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	  BOOL success = [JITInitializer waitForJITWithTimeout:120.0 // 2 minutes
+	                                        progressBlock:^(float progress, NSString* status) {
+		                                      dispatch_async(dispatch_get_main_queue(), ^{
+			                                    [progressView setProgress:progress animated:YES];
+			                                    statusLabel.text = status;
+		                                      });
+	                                        }];
+
+	  dispatch_async(dispatch_get_main_queue(), ^{
+		[jitAlert dismissViewControllerAnimated:YES
+			                         completion:^{
+				                       if(success)
+				                       {
 					                       [self startEmulation];
-				                         }];
-		  });
-		});
+				                       }
+				                       else
+				                       {
+					                       [self showJITFailedError];
+				                       }
+			                         }];
+	  });
+	});
+}
+
+- (void)showJITFailedError
+{
+	NSString* reason = [JITInitializer jitUnavailableReason];
+	UIAlertController* errorAlert = [UIAlertController alertControllerWithTitle:@"JIT Not Available"
+	                                                                    message:reason
+	                                                             preferredStyle:UIAlertControllerStyleAlert];
+
+	UIAlertAction* retryAction = [UIAlertAction actionWithTitle:@"Retry"
+	                                                      style:UIAlertActionStyleDefault
+	                                                    handler:^(UIAlertAction* action) {
+		                                                  [self showWaitingForJITScreen];
+	                                                    }];
+	[errorAlert addAction:retryAction];
+
+	UIAlertAction* cancelAction = [UIAlertAction actionWithTitle:@"Cancel"
+	                                                       style:UIAlertActionStyleCancel
+	                                                     handler:^(UIAlertAction* action) {
+		                                                   [self.navigationController popViewControllerAnimated:YES];
+	                                                     }];
+	[errorAlert addAction:cancelAction];
+
+	[self presentViewController:errorAlert animated:YES completion:nil];
+}
+
+- (void)checkJITAndStartEmulation
+{
+	// Check if JIT is actually available after allocation attempt
+	if(![JITInitializer isJITAvailable])
+	{
+		[self showJITFailedError];
 		return;
 	}
 

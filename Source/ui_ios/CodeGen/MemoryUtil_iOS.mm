@@ -127,6 +127,26 @@ namespace CodeGen
 		      (void*)rwAddr, rxPtr, alignedSize);
 	}
 
+	bool WaitForDebuggerAttach(uint32_t timeout_ms)
+	{
+#if HAS_BREAKPOINTJIT_EXTENDED
+		NSLog(@"[MemoryUtil_iOS] Waiting for debugger (StikDebug) to attach...");
+		return BreakWaitForDebugger(timeout_ms);
+#else
+		// No extended API - can't wait
+		return false;
+#endif
+	}
+
+	bool IsDebuggerAttached()
+	{
+#if HAS_BREAKPOINTJIT_EXTENDED
+		return BreakIsDebugged();
+#else
+		return false;
+#endif
+	}
+
 	void AllocateExecutableMemoryRegion()
 	{
 		if(s_regionAllocated)
@@ -156,10 +176,10 @@ namespace CodeGen
 			NSLog(@"[MemoryUtil_iOS] Installed SIGTRAP handler for BreakpointJIT safety");
 		}
 
-		// Check if debugger/JIT is actually available
+		// Check if debugger/JIT is already active
 		if(!BreakIsJITActive())
 		{
-			NSLog(@"[MemoryUtil_iOS] JIT is not active (StikDebug not attached?) - cannot use TXM");
+			NSLog(@"[MemoryUtil_iOS] JIT is not active yet - debugger not attached");
 			return;
 		}
 #endif
