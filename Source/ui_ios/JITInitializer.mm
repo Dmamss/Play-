@@ -101,8 +101,10 @@ static dispatch_semaphore_t GetReadySemaphore()
 
 		if(!CodeGen::IsExecutableMemoryRegionAllocated())
 		{
-			NSLog(@"[JITInitializer] ERROR: Failed to allocate executable memory region");
-			// Signal ready anyway to unblock waiters (they'll get an error at JIT time)
+			// TXM allocation failed (StikDebug not attached or BreakpointJIT failed)
+			// Fall back to Legacy mode - JIT blocks will use vm_allocate/vm_protect
+			NSLog(@"[JITInitializer] WARNING: TXM allocation failed, falling back to Legacy mode");
+			CodeGen::SetJitType(CodeGen::JitType::Legacy);
 			[self signalReady];
 			return;
 		}
@@ -112,7 +114,8 @@ static dispatch_semaphore_t GetReadySemaphore()
 	{
 		NSLog(@"[JITInitializer] Allocating LuckNoTXM pool...");
 		CodeGen::AllocateNoTxmPool();
-		NSLog(@"[JITInitializer] LuckNoTXM pool allocated");
+		// NoTXM pool allocation is best-effort; individual blocks can fall back to per-block alloc
+		NSLog(@"[JITInitializer] LuckNoTXM pool allocated (or fallback to per-block)");
 	}
 	else
 	{

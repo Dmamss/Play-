@@ -260,41 +260,81 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 #if defined(MEMFUNC_IOS_RUNTIME_JIT_MODES)
 	{
 		auto mode = CMemoryFunctioniOS::GetJitMode();
+		bool usedFallback = false;
+
 		if(mode == CMemoryFunctioniOS::JitMode::LuckTXM)
 		{
 			auto [rwPtr, rxPtr, aSize] = TxmSubAllocate(size);
-			assert(rwPtr != nullptr);
-			m_codeRW       = rwPtr;
-			m_code         = rxPtr; // RX view – used for execution
-			m_size         = aSize;
-			m_dualMapped   = true;
-			m_fromPool = true;
-			memcpy(m_codeRW, code, size);
+			if(rwPtr != nullptr)
+			{
+				m_codeRW       = rwPtr;
+				m_code         = rxPtr; // RX view – used for execution
+				m_size         = aSize;
+				m_dualMapped   = true;
+				m_fromPool     = true;
+				memcpy(m_codeRW, code, size);
+			}
+			else
+			{
+				// TXM region not allocated or exhausted - fall back to Legacy
+				usedFallback = true;
+			}
 		}
 		else if(mode == CMemoryFunctioniOS::JitMode::LuckNoTXM)
 		{
 			auto [rwPtr, rxPtr, aSize] = LuckNoTxmAllocate(size);
-			assert(rwPtr != nullptr);
-			m_codeRW     = rwPtr;
-			m_code       = rxPtr;
-			m_size       = aSize;
-			m_dualMapped = true;
-			m_fromPool   = (s_noTxmRWBase != nullptr &&
-			                reinterpret_cast<uint8_t*>(rwPtr) >= reinterpret_cast<uint8_t*>(s_noTxmRWBase) &&
-			                reinterpret_cast<uint8_t*>(rwPtr) < reinterpret_cast<uint8_t*>(s_noTxmRWBase) + s_noTxmSize);
-			memcpy(m_codeRW, code, size);
+			if(rwPtr != nullptr)
+			{
+				m_codeRW     = rwPtr;
+				m_code       = rxPtr;
+				m_size       = aSize;
+				m_dualMapped = true;
+				m_fromPool   = (s_noTxmRWBase != nullptr &&
+				                reinterpret_cast<uint8_t*>(rwPtr) >= reinterpret_cast<uint8_t*>(s_noTxmRWBase) &&
+				                reinterpret_cast<uint8_t*>(rwPtr) < reinterpret_cast<uint8_t*>(s_noTxmRWBase) + s_noTxmSize);
+				memcpy(m_codeRW, code, size);
+			}
+			else
+			{
+				// NoTXM allocation failed - fall back to Legacy
+				usedFallback = true;
+			}
 		}
-		else // Legacy
+		else
 		{
+			// Legacy mode requested directly
+			usedFallback = true;
+		}
+
+		if(usedFallback)
+		{
+			// Legacy allocation: vm_allocate + vm_protect (works without JIT entitlement for interpreter)
 			vm_size_t page_size = 0;
 			host_page_size(mach_task_self(), &page_size);
 			unsigned int allocSize = ((size + page_size - 1) / page_size) * page_size;
-			vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);
+			kern_return_t allocResult = vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);
+			if(allocResult != KERN_SUCCESS || m_code == nullptr)
+			{
+				// Complete allocation failure - this will leave m_code as nullptr
+				// which IsEmpty() will detect
+				m_code = nullptr;
+				m_size = 0;
+				return;
+			}
 			memcpy(m_code, code, size);
 			vm_prot_t protection = VM_PROT_READ | VM_PROT_EXECUTE;
 			kern_return_t result = vm_protect(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), size, 0, protection);
-			assert(result == 0);
+			if(result != KERN_SUCCESS)
+			{
+				// Protection change failed - cleanup and mark as empty
+				vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), allocSize);
+				m_code = nullptr;
+				m_size = 0;
+				return;
+			}
 			m_size = allocSize;
+			m_dualMapped = false;
+			m_fromPool = false;
 		}
 	}
 #else
