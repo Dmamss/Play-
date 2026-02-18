@@ -2,6 +2,7 @@
 
 #include "../GSHandler.h"
 #include "../GsPixelFormats.h"
+#include "../GsTextureCache.h"
 
 #ifdef __OBJC__
 #import <Metal/Metal.h>
@@ -23,9 +24,44 @@ typedef void* MTLSamplerStateRef;
 typedef void* MTLLibraryRef;
 #endif
 
+// Metal texture handle wrapper for CGsTextureCache template
+struct MetalTextureHandle
+{
+#ifdef __OBJC__
+	id<MTLTexture> texture = nil;
+#else
+	void* texture = nullptr;
+#endif
+
+	MetalTextureHandle() = default;
+	MetalTextureHandle(MetalTextureHandle&& other) noexcept
+	    : texture(other.texture)
+	{
+		other.texture = nullptr;
+	}
+	MetalTextureHandle& operator=(MetalTextureHandle&& other) noexcept
+	{
+		if(this != &other)
+		{
+			texture = other.texture;
+			other.texture = nullptr;
+		}
+		return *this;
+	}
+	MetalTextureHandle(const MetalTextureHandle&) = delete;
+	MetalTextureHandle& operator=(const MetalTextureHandle&) = delete;
+
+	operator bool() const
+	{
+		return texture != nullptr;
+	}
+};
+
 class CGSH_Metal : public CGSHandler
 {
 public:
+	typedef CGsTextureCache<MetalTextureHandle> TextureCache;
+
 	CGSH_Metal();
 	virtual ~CGSH_Metal() = default;
 
@@ -330,4 +366,11 @@ private:
 
 	CLUTKEY m_clutStates[CLUT_CACHE_SIZE];
 	uint32 m_nextClutCacheIndex = 0;
+
+	// Texture cache (256 entries LRU, like OpenGL/Vulkan backends)
+	TextureCache m_textureCache;
+
+	// Texture preparation and caching
+	id<MTLTexture> PrepareTexture(const TEX0& tex0);
+	void DecodeTexture(id<MTLTexture> texture, const TEX0& tex0, uint32 x, uint32 y, uint32 w, uint32 h);
 };

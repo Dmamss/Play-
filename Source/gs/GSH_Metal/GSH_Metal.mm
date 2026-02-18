@@ -6,6 +6,7 @@
 #include "app_shared/AppConfig.h"
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 // Metal-specific preference keys (matches ui_ios/PreferenceDefs.h)
 #define PREF_METAL_ACCURATE_BLENDING "video.metal.accurateblending"
@@ -1699,6 +1700,9 @@ void CGSH_Metal::MarkPagesDirty(uint32 startAddr, uint32 size)
 			m_dirtyPageBitmap[p / 64] |= (1ULL << (p % 64));
 		}
 	}
+
+	// Invalidate texture cache for this memory range
+	m_textureCache.InvalidateRange(startAddr, size);
 }
 
 void CGSH_Metal::MarkAllPagesDirty()
@@ -1707,6 +1711,8 @@ void CGSH_Metal::MarkAllPagesDirty()
 	{
 		m_dirtyPageBitmap[i] = 0xFFFFFFFFFFFFFFFF;
 	}
+	// Flush entire texture cache
+	m_textureCache.Flush();
 }
 
 void CGSH_Metal::ClearDirtyPages()
@@ -1815,6 +1821,150 @@ void CGSH_Metal::SyncCLUT(const TEX0& tex0)
 			clutDst[i] = r | (g << 8) | (b << 16) | (a << 24);
 		}
 	}
+}
+
+// ============================================================
+// PrepareTexture - Get or create cached texture for TEX0
+// ============================================================
+id<MTLTexture> CGSH_Metal::PrepareTexture(const TEX0& tex0)
+{
+	if(!m_device || !m_memoryCache) return nil;
+
+	// Search cache first
+	auto cachedTexture = m_textureCache.Search(tex0);
+	if(!cachedTexture)
+	{
+		// Create new texture
+		uint32 texWidth = std::min<uint32>(tex0.GetWidth(), TEX0_MAX_TEXTURE_SIZE);
+		uint32 texHeight = std::min<uint32>(tex0.GetHeight(), TEX0_MAX_TEXTURE_SIZE);
+
+		MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+		                                                                                width:texWidth
+		                                                                               height:texHeight
+		                                                                            mipmapped:NO];
+		desc.usage = MTLTextureUsageShaderRead;
+		desc.storageMode = MTLStorageModeShared;
+
+		id<MTLTexture> newTexture = [m_device newTextureWithDescriptor:desc];
+		if(!newTexture) return nil;
+
+		MetalTextureHandle handle;
+		handle.texture = newTexture;
+		m_textureCache.Insert(tex0, std::move(handle));
+
+		cachedTexture = m_textureCache.Search(tex0);
+		if(cachedTexture)
+		{
+			cachedTexture->m_cachedArea.Invalidate(0, GS_RAM_SIZE);
+		}
+	}
+
+	if(!cachedTexture) return nil;
+
+	// Update dirty regions
+	auto& cachedArea = cachedTexture->m_cachedArea;
+	auto texturePageSize = CGsPixelFormats::GetPsmPageSize(tex0.nPsm);
+
+	while(cachedArea.HasDirtyPages())
+	{
+		auto dirtyRect = cachedArea.GetDirtyPageRect();
+		if(dirtyRect.width == 0 || dirtyRect.height == 0) break;
+		cachedArea.ClearDirtyPages(dirtyRect);
+
+		uint32 texX = dirtyRect.x * texturePageSize.first;
+		uint32 texY = dirtyRect.y * texturePageSize.second;
+		uint32 texW = dirtyRect.width * texturePageSize.first;
+		uint32 texH = dirtyRect.height * texturePageSize.second;
+
+		// Clamp to texture dimensions
+		uint32 texWidth = tex0.GetWidth();
+		uint32 texHeight = tex0.GetHeight();
+		if(texX + texW > texWidth) texW = texWidth - texX;
+		if(texY + texH > texHeight) texH = texHeight - texY;
+
+		if(texW > 0 && texH > 0)
+		{
+			DecodeTexture(cachedTexture->m_textureHandle.texture, tex0, texX, texY, texW, texH);
+		}
+	}
+
+	return cachedTexture->m_textureHandle.texture;
+}
+
+// ============================================================
+// DecodeTexture - Decode PS2 texture data to RGBA8 Metal texture
+// ============================================================
+void CGSH_Metal::DecodeTexture(id<MTLTexture> texture, const TEX0& tex0, uint32 x, uint32 y, uint32 w, uint32 h)
+{
+	if(!texture || !m_memoryCache) return;
+
+	uint32 bufPtr = tex0.GetBufPtr();
+	uint32 bufWidth = tex0.GetBufWidth();
+	uint32 psm = tex0.nPsm;
+
+	// Allocate temporary buffer for decoded RGBA data
+	std::vector<uint32> decodedData(w * h);
+
+	for(uint32 py = 0; py < h; py++)
+	{
+		for(uint32 px = 0; px < w; px++)
+		{
+			uint32 texX = x + px;
+			uint32 texY = y + py;
+			uint32 pixel = 0;
+
+			switch(psm)
+			{
+			case PSMCT32:
+			case PSMCT24:
+			{
+				CGsPixelFormats::CPixelIndexorPSMCT32 indexor(m_memoryCache, bufPtr, bufWidth);
+				pixel = indexor.GetPixel(texX, texY);
+				if(psm == PSMCT24) pixel |= 0xFF000000; // Full alpha
+			}
+			break;
+			case PSMCT16:
+			case PSMCT16S:
+			{
+				CGsPixelFormats::CPixelIndexorPSMCT16 indexor(m_memoryCache, bufPtr, bufWidth);
+				uint16 color16 = indexor.GetPixel(texX, texY);
+				uint32 r = ((color16 >> 0) & 0x1F) << 3;
+				uint32 g = ((color16 >> 5) & 0x1F) << 3;
+				uint32 b = ((color16 >> 10) & 0x1F) << 3;
+				uint32 a = ((color16 >> 15) & 0x01) ? 0x80 : 0;
+				pixel = r | (g << 8) | (b << 16) | (a << 24);
+			}
+			break;
+			case PSMT8:
+			case PSMT8H:
+			{
+				CGsPixelFormats::CPixelIndexorPSMT8 indexor(m_memoryCache, bufPtr, bufWidth);
+				uint8 index = indexor.GetPixel(texX, texY);
+				// For indexed textures, store index in R channel (will be looked up via CLUT)
+				pixel = index | (index << 8) | (index << 16) | 0xFF000000;
+			}
+			break;
+			case PSMT4:
+			case PSMT4HL:
+			case PSMT4HH:
+			{
+				CGsPixelFormats::CPixelIndexorPSMT4 indexor(m_memoryCache, bufPtr, bufWidth);
+				uint8 index = indexor.GetPixel(texX, texY);
+				pixel = index | (index << 8) | (index << 16) | 0xFF000000;
+			}
+			break;
+			default:
+				pixel = 0xFFFF00FF; // Magenta for unsupported formats
+				break;
+			}
+
+			decodedData[py * w + px] = pixel;
+		}
+	}
+
+	// Upload to Metal texture
+	MTLRegion region = MTLRegionMake2D(x, y, w, h);
+	[texture replaceRegion:region mipmapLevel:0 withBytes:decodedData.data() bytesPerRow:w * 4];
 }
 
 // ============================================================
