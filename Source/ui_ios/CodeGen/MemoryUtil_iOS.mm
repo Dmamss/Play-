@@ -14,6 +14,12 @@
 #import <mach/vm_map.h>
 #import <sys/mman.h>
 #import <libkern/OSCacheControl.h>
+#import <unistd.h>
+
+// csops() syscall for checking CS_DEBUGGED flag (same as DolphiniOS)
+#define CS_OPS_STATUS 0
+#define CS_DEBUGGED 0x10000000
+extern "C" int csops(pid_t pid, unsigned int ops, void* useraddr, size_t usersize);
 
 #if __has_include(<BreakpointJIT/BreakJIT.h>)
 #import <BreakpointJIT/BreakJIT.h>
@@ -127,24 +133,47 @@ namespace CodeGen
 		      (void*)rwAddr, rxPtr, alignedSize);
 	}
 
+	// Check if process has CS_DEBUGGED flag set (same method as DolphiniOS)
+	// This is set when a debugger (like StikDebug) attaches to the process
+	static bool IsProcessDebugged()
+	{
+		int flags = 0;
+		int retval = csops(getpid(), CS_OPS_STATUS, &flags, sizeof(flags));
+		return retval == 0 && (flags & CS_DEBUGGED);
+	}
+
+	// Wait for debugger to attach by polling CS_DEBUGGED flag (same as DolphiniOS)
+	static bool WaitUntilProcessDebugged(int timeout_seconds)
+	{
+		int time_left = timeout_seconds;
+
+		while(time_left > 0)
+		{
+			if(IsProcessDebugged())
+			{
+				return true;
+			}
+
+			time_left--;
+			usleep(1000000); // 1 second, same as DolphiniOS
+		}
+
+		return false;
+	}
+
 	bool WaitForDebuggerAttach(uint32_t timeout_ms)
 	{
-#if HAS_BREAKPOINTJIT_EXTENDED
 		NSLog(@"[MemoryUtil_iOS] Waiting for debugger (StikDebug) to attach...");
-		return BreakWaitForDebugger(timeout_ms);
-#else
-		// No extended API - can't wait
-		return false;
-#endif
+
+		// Convert ms to seconds for DolphiniOS-style polling
+		int timeout_seconds = (timeout_ms + 999) / 1000;
+
+		return WaitUntilProcessDebugged(timeout_seconds);
 	}
 
 	bool IsDebuggerAttached()
 	{
-#if HAS_BREAKPOINTJIT_EXTENDED
-		return BreakIsDebugged();
-#else
-		return false;
-#endif
+		return IsProcessDebugged();
 	}
 
 	void AllocateExecutableMemoryRegion()
@@ -167,20 +196,21 @@ namespace CodeGen
 		NSLog(@"[MemoryUtil_iOS] Allocating %zu byte executable memory region via BreakpointJIT...", alignedSize);
 
 #if HAS_BREAKPOINTJIT
+		// Check if debugger is attached using csops (same as DolphiniOS)
+		// This must be checked BEFORE calling BreakGetJITMapping to avoid crash
+		if(!IsProcessDebugged())
+		{
+			NSLog(@"[MemoryUtil_iOS] JIT is not active yet - debugger not attached (CS_DEBUGGED not set)");
+			return;
+		}
+
 #if HAS_BREAKPOINTJIT_EXTENDED
-		// Install trap handler to prevent crash if StikDebug is not attached
+		// Install trap handler as extra safety measure
 		if(!s_trapHandlerInstalled)
 		{
 			BreakInstallTrapHandler();
 			s_trapHandlerInstalled = true;
 			NSLog(@"[MemoryUtil_iOS] Installed SIGTRAP handler for BreakpointJIT safety");
-		}
-
-		// Check if debugger/JIT is already active
-		if(!BreakIsJITActive())
-		{
-			NSLog(@"[MemoryUtil_iOS] JIT is not active yet - debugger not attached");
-			return;
 		}
 #endif
 
