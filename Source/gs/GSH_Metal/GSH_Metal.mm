@@ -663,6 +663,48 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
                            sampler s [[sampler(0)]]) {
     return srcTexture.sample(s, in.texcoord);
 }
+
+// ============================================================
+// Compute kernel for local-to-local transfers (GPU-accelerated)
+// ============================================================
+struct TransferParams {
+    uint srcBufPtr;
+    uint srcBufWidth;
+    uint dstBufPtr;
+    uint dstBufWidth;
+    uint srcX;
+    uint srcY;
+    uint dstX;
+    uint dstY;
+    uint width;
+    uint height;
+};
+
+kernel void cs_local_transfer(
+    device uint* gsMemory [[buffer(0)]],
+    constant uint* swizzleTableCT32 [[buffer(1)]],
+    constant TransferParams& params [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if(gid.x >= params.width || gid.y >= params.height) return;
+
+    int srcPosX = int(params.srcX + gid.x);
+    int srcPosY = int(params.srcY + gid.y);
+    int dstPosX = int(params.dstX + gid.x);
+    int dstPosY = int(params.dstY + gid.y);
+
+    // Read from source using swizzle table
+    uint srcAddr = computeAddressPSMCT32(srcPosX, srcPosY, params.srcBufPtr, params.srcBufWidth, swizzleTableCT32);
+    uint srcWordAddr = srcAddr / 4;
+    uint pixel = (srcWordAddr < 1048576) ? gsMemory[srcWordAddr] : 0;
+
+    // Write to destination using swizzle table
+    uint dstAddr = computeAddressPSMCT32(dstPosX, dstPosY, params.dstBufPtr, params.dstBufWidth, swizzleTableCT32);
+    uint dstWordAddr = dstAddr / 4;
+    if(dstWordAddr < 1048576) {
+        gsMemory[dstWordAddr] = pixel;
+    }
+}
 )";
 
 		MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
@@ -791,6 +833,29 @@ fragment float4 fs_present(PresentVertexOut in [[stage_in]],
 		desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
 		m_presentPipeline = [m_device newRenderPipelineStateWithDescriptor:desc error:&error];
 		if(error) NSLog(@"[GSH_Metal] Present pipeline error: %@", error);
+	}
+
+	// Compute pipeline for local-to-local transfers (GPU-accelerated)
+	{
+		id<MTLFunction> transferFunc = [m_library newFunctionWithName:@"cs_local_transfer"];
+		if(transferFunc)
+		{
+			m_localTransferPipeline = [m_device newComputePipelineStateWithFunction:transferFunc error:&error];
+			if(error)
+			{
+				NSLog(@"[GSH_Metal] Local transfer compute pipeline error: %@", error);
+				m_localTransferPipeline = nil;
+			}
+			else
+			{
+				NSLog(@"[GSH_Metal] GPU local transfer compute pipeline created");
+			}
+		}
+		else
+		{
+			NSLog(@"[GSH_Metal] Local transfer compute function not found");
+			m_localTransferPipeline = nil;
+		}
 	}
 }
 
@@ -1863,17 +1928,96 @@ void CGSH_Metal::ProcessLocalToHostTransfer()
 
 void CGSH_Metal::ProcessLocalToLocalTransfer()
 {
-	// DON'T end the render encoder - just flush vertices and mark dirty
+	// DON'T end the render encoder - just flush vertices
 	FlushVertices();
-
-	if(m_pRAM && m_memoryCache)
-	{
-		memcpy(m_pRAM, m_memoryCache, GS_RAM_SIZE);
-	}
 
 	auto bltBuf = make_convertible<BITBLTBUF>(m_nReg[GS_REG_BITBLTBUF]);
 	auto trxPos = make_convertible<TRXPOS>(m_nReg[GS_REG_TRXPOS]);
 	auto trxReg = make_convertible<TRXREG>(m_nReg[GS_REG_TRXREG]);
+
+	// Skip if no work to do
+	if(trxReg.nRRW == 0 || trxReg.nRRH == 0) return;
+
+	// Try GPU-accelerated transfer first
+	if(m_localTransferPipeline != nil && m_gsMemoryBuffer != nil)
+	{
+		// End render encoder to switch to compute
+		EndFrameRenderEncoder();
+
+		// Ensure we have a command buffer
+		EnsureFrameCommandBuffer();
+
+		// Sync CPU memory to GPU buffer before compute
+		if(m_pRAM && m_memoryCache)
+		{
+			memcpy(m_memoryCache, m_pRAM, GS_RAM_SIZE);
+		}
+		UploadDirtyPages();
+
+		// Create compute encoder
+		id<MTLComputeCommandEncoder> computeEncoder = [m_frameCommandBuffer computeCommandEncoder];
+		if(computeEncoder)
+		{
+			computeEncoder.label = @"Local Transfer";
+
+			// Set up transfer parameters
+			TransferParams params;
+			params.srcBufPtr = bltBuf.GetSrcPtr();
+			params.srcBufWidth = bltBuf.GetSrcWidth();
+			params.dstBufPtr = bltBuf.GetDstPtr();
+			params.dstBufWidth = bltBuf.GetDstWidth();
+			params.srcX = trxPos.nSSAX;
+			params.srcY = trxPos.nSSAY;
+			params.dstX = trxPos.nDSAX;
+			params.dstY = trxPos.nDSAY;
+			params.width = trxReg.nRRW;
+			params.height = trxReg.nRRH;
+
+			[computeEncoder setComputePipelineState:m_localTransferPipeline];
+			[computeEncoder setBuffer:m_gsMemoryBuffer offset:0 atIndex:0];
+			[computeEncoder setBuffer:m_swizzleTablePSMCT32 offset:0 atIndex:1];
+			[computeEncoder setBytes:&params length:sizeof(params) atIndex:2];
+
+			// Calculate thread groups
+			MTLSize threadsPerGroup = MTLSizeMake(16, 16, 1);
+			MTLSize numGroups = MTLSizeMake(
+			    (params.width + 15) / 16,
+			    (params.height + 15) / 16,
+			    1);
+
+			[computeEncoder dispatchThreadgroups:numGroups threadsPerThreadgroup:threadsPerGroup];
+			[computeEncoder endEncoding];
+
+			// Read back modified data to CPU memory
+			// Note: This sync is necessary for CPU-side operations that may follow
+			[m_frameCommandBuffer commit];
+			[m_frameCommandBuffer waitUntilCompleted];
+			m_frameCommandBuffer = nil;
+
+			// Sync GPU buffer back to CPU
+			if(m_pRAM)
+			{
+				void* bufferContents = [m_gsMemoryBuffer contents];
+				memcpy(m_pRAM, bufferContents, GS_RAM_SIZE);
+				if(m_memoryCache)
+				{
+					memcpy(m_memoryCache, m_pRAM, GS_RAM_SIZE);
+				}
+			}
+
+			// Mark destination region as dirty for next render
+			uint32 dstPtr = bltBuf.GetDstPtr();
+			uint32 transferSize = trxReg.nRRW * trxReg.nRRH * 4;
+			MarkPagesDirty(dstPtr, transferSize);
+			return;
+		}
+	}
+
+	// Fallback to CPU implementation if GPU transfer not available
+	if(m_pRAM && m_memoryCache)
+	{
+		memcpy(m_pRAM, m_memoryCache, GS_RAM_SIZE);
+	}
 
 	for(uint32 y = 0; y < trxReg.nRRH; y++)
 	{

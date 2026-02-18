@@ -73,6 +73,7 @@ protected:
 	id<MTLRenderPipelineState> m_drawPipelineFlatFBFetch;     // Framebuffer fetch variant
 	id<MTLRenderPipelineState> m_drawPipelineTexturedFBFetch; // Framebuffer fetch variant
 	id<MTLRenderPipelineState> m_presentPipeline;
+	id<MTLComputePipelineState> m_localTransferPipeline;     // GPU local-to-local transfer
 	bool m_supportsFramebufferFetch;
 
 	// Depth/stencil states
@@ -130,6 +131,7 @@ protected:
 	void* m_drawPipelineFlatFBFetch;
 	void* m_drawPipelineTexturedFBFetch;
 	void* m_presentPipeline;
+	void* m_localTransferPipeline;
 	bool m_supportsFramebufferFetch;
 	void* m_depthStateNever;
 	void* m_depthStateAlways;
@@ -171,6 +173,21 @@ private:
 		float color[4];    // r, g, b, a
 		float fog;
 		float padding;
+	};
+
+	// Transfer parameters for GPU compute kernel
+	struct TransferParams
+	{
+		uint32 srcBufPtr;
+		uint32 srcBufWidth;
+		uint32 dstBufPtr;
+		uint32 dstBufWidth;
+		uint32 srcX;
+		uint32 srcY;
+		uint32 dstX;
+		uint32 dstY;
+		uint32 width;
+		uint32 height;
 	};
 
 	struct CLUTKEY
