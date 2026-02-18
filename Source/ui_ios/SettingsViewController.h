@@ -20,19 +20,9 @@
 	IBOutlet UISwitch* enableAudioOutput;
 	IBOutlet UILabel* audioHandlerName;
 
-	IBOutlet UISwitch* efbAccessSwitch;
-	IBOutlet UISwitch* textureCacheSwitch;
-	IBOutlet UISwitch* gpuSyncSwitch;
-
-	// Advanced Emulation
+	// Emulation options
 	IBOutlet UILabel* eeCycleRateLabel;
 	IBOutlet UISwitch* recompilerSwitch;
-	IBOutlet UISwitch* gsCopiesTextureSwitch;
-	IBOutlet UISwitch* ignoreFormatChangesSwitch;
-	IBOutlet UISwitch* gpuTextureDecodeSwitch;
-	IBOutlet UISwitch* fastDepthSwitch;
-	IBOutlet UISwitch* immediatePresentSwitch;
-	IBOutlet UISwitch* asyncShadersSwitch;
 
 	IBOutlet UISwitch* enableAltServerJIT;
 

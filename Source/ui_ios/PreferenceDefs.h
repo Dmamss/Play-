@@ -28,19 +28,8 @@
 #define PREFERENCE_PS2_EE_CYCLERATE_150 2
 #define PREFERENCE_PS2_EE_CYCLERATE_200 3
 
-// Advanced emulation options
+// Emulation options
 #define PREFERENCE_EMU_RECOMPILER "emu.recompiler"
-#define PREFERENCE_VIDEO_GS_COPIES_TO_TEXTURE "video.gs.copies.totexture"
-#define PREFERENCE_VIDEO_IGNORE_FORMAT_CHANGES "video.ignoreformatchanges"
-#define PREFERENCE_VIDEO_GPU_TEXTURE_DECODE "video.gputexturedecode"
-#define PREFERENCE_VIDEO_FAST_DEPTH "video.fastdepth"
-#define PREFERENCE_VIDEO_IMMEDIATE_PRESENT "video.immediatepresent"
-#define PREFERENCE_VIDEO_ASYNC_SHADERS "video.asyncshaders"
-
-// Advanced performance options (DolphiniOS-style)
-#define PREFERENCE_VIDEO_EFB_ACCESS "video.efb.access"
-#define PREFERENCE_VIDEO_TEXTURE_CACHE "video.texturecache"
-#define PREFERENCE_VIDEO_GPU_SYNC "video.gpusync"
 
 // Metal renderer options
 #define PREFERENCE_VIDEO_METAL_ACCURATE_BLENDING "video.metal.accurateblending"

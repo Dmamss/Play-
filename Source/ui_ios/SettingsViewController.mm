@@ -100,22 +100,13 @@
 	[enableAudioOutput setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_AUDIO_ENABLEOUTPUT)];
 	[self updateAudioHandlerNameLabel];
 
-	[efbAccessSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS)];
-	[textureCacheSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE)];
-	[gpuSyncSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC)];
-
+	// Emulation options
 	[self updateEeCycleRateLabel];
 	[recompilerSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_EMU_RECOMPILER)];
-	[gsCopiesTextureSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_GS_COPIES_TO_TEXTURE)];
-	[ignoreFormatChangesSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_IGNORE_FORMAT_CHANGES)];
-	[gpuTextureDecodeSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_GPU_TEXTURE_DECODE)];
-	[fastDepthSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_FAST_DEPTH)];
-	[immediatePresentSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_IMMEDIATE_PRESENT)];
-	[asyncShadersSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_ASYNC_SHADERS)];
 
 	[enableAltServerJIT setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_ALTSTORE_JIT_ENABLED)];
 
-	// Metal renderer options (default to ON for best quality)
+	// Metal renderer options
 	[metalAccurateBlendingSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_METAL_ACCURATE_BLENDING)];
 	[metalPrecompileShadersSwitch setOn:CAppConfig::GetInstance().GetPreferenceBoolean(PREFERENCE_VIDEO_METAL_PRECOMPILE_SHADERS)];
 
@@ -140,17 +131,8 @@
 
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_AUDIO_ENABLEOUTPUT, enableAudioOutput.isOn);
 
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_EFB_ACCESS, efbAccessSwitch.isOn);
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_TEXTURE_CACHE, textureCacheSwitch.isOn);
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_GPU_SYNC, gpuSyncSwitch.isOn);
-
+	// Emulation options
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_EMU_RECOMPILER, recompilerSwitch.isOn);
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_GS_COPIES_TO_TEXTURE, gsCopiesTextureSwitch.isOn);
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_IGNORE_FORMAT_CHANGES, ignoreFormatChangesSwitch.isOn);
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_GPU_TEXTURE_DECODE, gpuTextureDecodeSwitch.isOn);
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_FAST_DEPTH, fastDepthSwitch.isOn);
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_IMMEDIATE_PRESENT, immediatePresentSwitch.isOn);
-	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_VIDEO_ASYNC_SHADERS, asyncShadersSwitch.isOn);
 
 	CAppConfig::GetInstance().SetPreferenceBoolean(PREFERENCE_ALTSTORE_JIT_ENABLED, enableAltServerJIT.isOn);
 
