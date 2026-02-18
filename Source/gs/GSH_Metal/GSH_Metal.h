@@ -73,7 +73,7 @@ protected:
 	id<MTLRenderPipelineState> m_drawPipelineFlatFBFetch;     // Framebuffer fetch variant
 	id<MTLRenderPipelineState> m_drawPipelineTexturedFBFetch; // Framebuffer fetch variant
 	id<MTLRenderPipelineState> m_presentPipeline;
-	id<MTLComputePipelineState> m_localTransferPipeline;     // GPU local-to-local transfer
+	id<MTLComputePipelineState> m_localTransferPipeline; // GPU local-to-local transfer
 	bool m_supportsFramebufferFetch;
 
 	// Depth/stencil states
