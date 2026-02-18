@@ -162,6 +162,10 @@ protected:
 	{
 		uint64 x, y, width, height;
 	} m_boundScissorRect;
+	void* m_boundVertexBuffer;
+	void* m_boundFragmentBuffers[6];
+	void* m_boundSamplerState;
+	bool m_texturedStateSet;
 #endif
 
 private:
@@ -310,6 +314,12 @@ private:
 	id<MTLRenderPipelineState> m_boundPipelineState;
 	id<MTLDepthStencilState> m_boundDepthStencilState;
 	MTLScissorRect m_boundScissorRect;
+
+	// Buffer binding tracking
+	id<MTLBuffer> m_boundVertexBuffer;
+	id<MTLBuffer> m_boundFragmentBuffers[6];  // gsMemory, clut, swizzle tables
+	id<MTLSamplerState> m_boundSamplerState;
+	bool m_texturedStateSet;  // Track if textured buffers are bound
 
 	// Dirty page tracking (512 pages, 8KB each)
 	// Using 8 x 64-bit words = 512 bits for the bitmap

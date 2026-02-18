@@ -104,6 +104,10 @@ CGSH_Metal::CGSH_Metal()
     , m_boundPipelineState(nil)
     , m_boundDepthStencilState(nil)
     , m_boundScissorRect{0, 0, 0, 0}
+    , m_boundVertexBuffer(nil)
+    , m_boundFragmentBuffers{nil, nil, nil, nil, nil, nil}
+    , m_boundSamplerState(nil)
+    , m_texturedStateSet(false)
 {
 	memset(&m_clutStates, 0, sizeof(m_clutStates));
 	memset(&m_primitiveMode, 0, sizeof(m_primitiveMode));
@@ -1004,6 +1008,10 @@ void CGSH_Metal::EnsureFrameRenderEncoder()
 	m_boundPipelineState = nil;
 	m_boundDepthStencilState = nil;
 	m_boundScissorRect = {0, 0, 0, 0};
+	m_boundVertexBuffer = nil;
+	memset(m_boundFragmentBuffers, 0, sizeof(m_boundFragmentBuffers));
+	m_boundSamplerState = nil;
+	m_texturedStateSet = false;
 }
 
 void CGSH_Metal::EndFrameRenderEncoder()
@@ -1580,10 +1588,16 @@ void CGSH_Metal::FlushVertices()
 		}
 	}
 
-	// Vertex buffer (use current triple-buffered index)
-	[m_frameRenderEncoder setVertexBuffer:m_vertexBuffers[m_currentBufferIndex] offset:0 atIndex:0];
+	// Vertex buffer (with state tracking)
+	id<MTLBuffer> currentVertexBuffer = m_vertexBuffers[m_currentBufferIndex];
+	if(currentVertexBuffer != m_boundVertexBuffer)
+	{
+		[m_frameRenderEncoder setVertexBuffer:currentVertexBuffer offset:0 atIndex:0];
+		m_boundVertexBuffer = currentVertexBuffer;
+	}
 
 	// Uniforms - use extended struct for framebuffer fetch
+	// Note: Uniforms change frequently, so we always set them (setFragmentBytes is efficient)
 	if(m_useFramebufferFetch && m_drawPipelineFlatFBFetch)
 	{
 		FBFetchUniforms uniforms = {};
@@ -1603,7 +1617,6 @@ void CGSH_Metal::FlushVertices()
 		uniforms.alphaTestEnabled = m_alphaTestEnabled ? 1 : 0;
 		uniforms.fogColor = simd_make_float3(m_fogR, m_fogG, m_fogB);
 		uniforms.fogEnabled = m_primitiveMode.nFog ? 1 : 0;
-		// PS2 alpha blend parameters
 		uniforms.alphaA = m_alphaA;
 		uniforms.alphaB = m_alphaB;
 		uniforms.alphaC = m_alphaC;
@@ -1632,13 +1645,15 @@ void CGSH_Metal::FlushVertices()
 		[m_frameRenderEncoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
 	}
 
-	if(m_drawIsTextured)
+	// Texture buffers (with state tracking - these don't change often)
+	if(m_drawIsTextured && !m_texturedStateSet)
 	{
 		[m_frameRenderEncoder setFragmentBuffer:m_gsMemoryBuffer offset:0 atIndex:1];
 		[m_frameRenderEncoder setFragmentBuffer:m_clutBuffer offset:0 atIndex:2];
 		[m_frameRenderEncoder setFragmentBuffer:m_swizzleTablePSMCT32 offset:0 atIndex:3];
 		[m_frameRenderEncoder setFragmentBuffer:m_swizzleTablePSMCT16 offset:0 atIndex:4];
 		[m_frameRenderEncoder setFragmentBuffer:m_swizzleTablePSMT8 offset:0 atIndex:5];
+		m_texturedStateSet = true;
 	}
 
 	[m_frameRenderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:m_currentVertex];
