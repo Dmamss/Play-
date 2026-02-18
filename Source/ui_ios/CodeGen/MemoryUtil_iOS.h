@@ -15,6 +15,7 @@
 //
 
 #include <cstddef>
+#include <cstdint>
 
 namespace CodeGen
 {
