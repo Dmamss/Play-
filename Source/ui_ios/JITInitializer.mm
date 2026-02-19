@@ -14,6 +14,10 @@ static dispatch_once_t s_semaphoreOnce;
 /// Track if TXM allocation failed (StikDebug not attached)
 static BOOL s_txmAllocationFailed = NO;
 
+/// Prevent multiple allocation attempts
+static BOOL s_allocationInProgress = NO;
+static dispatch_once_t s_allocationOnce;
+
 static dispatch_semaphore_t GetReadySemaphore()
 {
 	dispatch_once(&s_semaphoreOnce, ^{
@@ -87,46 +91,46 @@ static dispatch_semaphore_t GetReadySemaphore()
 
 + (void)allocateExecutableMemoryIfNeeded
 {
-	if(s_jitReady) return;
+	// Use dispatch_once to ensure allocation only happens once across all threads
+	dispatch_once(&s_allocationOnce, ^{
+	  if(s_jitReady) return;
 
-	auto jitType = CodeGen::GetJitType();
+	  auto jitType = CodeGen::GetJitType();
 
-	if(jitType == CodeGen::JitType::LuckTXM)
-	{
-		if(CodeGen::IsExecutableMemoryRegionAllocated())
-		{
-			[self signalReady];
-			return;
-		}
+	  if(jitType == CodeGen::JitType::LuckTXM)
+	  {
+		  if(CodeGen::IsExecutableMemoryRegionAllocated())
+		  {
+			  [self signalReady];
+			  return;
+		  }
 
-		NSLog(@"[JITInitializer] Allocating LuckTXM executable memory region...");
-		CodeGen::AllocateExecutableMemoryRegion();
+		  NSLog(@"[JITInitializer] Allocating LuckTXM executable memory region...");
+		  CodeGen::AllocateExecutableMemoryRegion();
 
-		if(!CodeGen::IsExecutableMemoryRegionAllocated())
-		{
-			// TXM allocation failed - StikDebug not attached or BreakpointJIT failed
-			// On TXM devices, there's NO fallback - Legacy won't work!
-			// Mark as failed so UI can show error to user
-			NSLog(@"[JITInitializer] ERROR: TXM allocation failed - StikDebug not attached?");
-			s_txmAllocationFailed = YES;
-			[self signalReady]; // Signal ready so UI can check and show error
-			return;
-		}
-		NSLog(@"[JITInitializer] LuckTXM region allocated successfully");
-	}
-	else if(jitType == CodeGen::JitType::LuckNoTXM)
-	{
-		NSLog(@"[JITInitializer] Allocating LuckNoTXM pool...");
-		CodeGen::AllocateNoTxmPool();
-		// NoTXM pool allocation is best-effort; individual blocks can fall back to per-block alloc
-		NSLog(@"[JITInitializer] LuckNoTXM pool allocated (or fallback to per-block)");
-	}
-	else
-	{
-		NSLog(@"[JITInitializer] Legacy JIT mode - no pre-allocation needed");
-	}
+		  if(!CodeGen::IsExecutableMemoryRegionAllocated())
+		  {
+			  // TXM allocation failed - StikDebug not attached or BreakpointJIT failed
+			  NSLog(@"[JITInitializer] ERROR: TXM allocation failed - StikDebug not attached?");
+			  s_txmAllocationFailed = YES;
+			  [self signalReady];
+			  return;
+		  }
+		  NSLog(@"[JITInitializer] LuckTXM region allocated successfully");
+	  }
+	  else if(jitType == CodeGen::JitType::LuckNoTXM)
+	  {
+		  NSLog(@"[JITInitializer] Allocating LuckNoTXM pool...");
+		  CodeGen::AllocateNoTxmPool();
+		  NSLog(@"[JITInitializer] LuckNoTXM pool allocated (or fallback to per-block)");
+	  }
+	  else
+	  {
+		  NSLog(@"[JITInitializer] Legacy JIT mode - no pre-allocation needed");
+	  }
 
-	[self signalReady];
+	  [self signalReady];
+	});
 }
 
 + (void)beginAsyncAllocation

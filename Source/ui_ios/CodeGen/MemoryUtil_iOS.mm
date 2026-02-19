@@ -34,6 +34,11 @@ static int csops_wrapper(pid_t pid, unsigned int ops, void* useraddr, size_t use
 #define HAS_BREAKPOINTJIT 0
 #endif
 
+#include <mutex>
+
+// Mutex to prevent multiple threads from calling BreakGetJITMapping simultaneously
+static std::mutex s_allocationMutex;
+
 // Default pre-allocation size (512MB for TXM, 128MB for NoTXM pool)
 static constexpr size_t kDefaultRegionSize = 512 * 1024 * 1024;
 static constexpr size_t kNoTxmPoolSize = 128 * 1024 * 1024;
@@ -173,6 +178,9 @@ namespace CodeGen
 
 	void AllocateExecutableMemoryRegion()
 	{
+		// Thread-safe: only one thread can allocate the region
+		std::lock_guard<std::mutex> lock(s_allocationMutex);
+
 		if(s_regionAllocated)
 		{
 			NSLog(@"[MemoryUtil_iOS] Executable memory region already allocated");
@@ -198,6 +206,8 @@ namespace CodeGen
 			NSLog(@"[MemoryUtil_iOS] JIT is not active yet - debugger not attached (CS_DEBUGGED not set)");
 			return;
 		}
+
+		NSLog(@"[MemoryUtil_iOS] CS_DEBUGGED confirmed, calling BreakGetJITMapping...");
 
 		// Use BreakpointJIT to allocate RX memory from StikDebug
 		void* rxBase = BreakGetJITMapping(NULL, alignedSize);
