@@ -24,20 +24,9 @@ extern "C" int csops(pid_t pid, unsigned int ops, void* useraddr, size_t usersiz
 #if __has_include(<BreakpointJIT/BreakJIT.h>)
 #import <BreakpointJIT/BreakJIT.h>
 #define HAS_BREAKPOINTJIT 1
-// Check for extended API with safety functions
-#if __has_include(<BreakpointJIT/BreakJIT_Extended.h>)
-#import <BreakpointJIT/BreakJIT_Extended.h>
-#define HAS_BREAKPOINTJIT_EXTENDED 1
-#else
-#define HAS_BREAKPOINTJIT_EXTENDED 0
-#endif
 #else
 #define HAS_BREAKPOINTJIT 0
-#define HAS_BREAKPOINTJIT_EXTENDED 0
 #endif
-
-// Track if trap handler has been installed
-static bool s_trapHandlerInstalled = false;
 
 // Default pre-allocation size (512MB for TXM, 128MB for NoTXM pool)
 static constexpr size_t kDefaultRegionSize = 512 * 1024 * 1024;
@@ -203,16 +192,6 @@ namespace CodeGen
 			NSLog(@"[MemoryUtil_iOS] JIT is not active yet - debugger not attached (CS_DEBUGGED not set)");
 			return;
 		}
-
-#if HAS_BREAKPOINTJIT_EXTENDED
-		// Install trap handler as extra safety measure
-		if(!s_trapHandlerInstalled)
-		{
-			BreakInstallTrapHandler();
-			s_trapHandlerInstalled = true;
-			NSLog(@"[MemoryUtil_iOS] Installed SIGTRAP handler for BreakpointJIT safety");
-		}
-#endif
 
 		// Use BreakpointJIT to allocate RX memory from StikDebug
 		void* rxBase = BreakGetJITMapping(NULL, alignedSize);
