@@ -15,11 +15,17 @@
 #import <sys/mman.h>
 #import <libkern/OSCacheControl.h>
 #import <unistd.h>
+#import <sys/syscall.h>
 
 // csops() syscall for checking CS_DEBUGGED flag (same as DolphiniOS)
+// Use syscall directly like StikDebugJitService does - more reliable on iOS
 #define CS_OPS_STATUS 0
 #define CS_DEBUGGED 0x10000000
-extern "C" int csops(pid_t pid, unsigned int ops, void* useraddr, size_t usersize);
+
+static int csops_wrapper(pid_t pid, unsigned int ops, void* useraddr, size_t usersize)
+{
+	return syscall(169, pid, ops, useraddr, usersize);
+}
 
 #if __has_include(<BreakpointJIT/BreakJIT.h>)
 #import <BreakpointJIT/BreakJIT.h>
@@ -126,9 +132,9 @@ namespace CodeGen
 	// This is set when a debugger (like StikDebug) attaches to the process
 	static bool IsProcessDebugged()
 	{
-		int flags = 0;
-		int retval = csops(getpid(), CS_OPS_STATUS, &flags, sizeof(flags));
-		return retval == 0 && (flags & CS_DEBUGGED);
+		uint32_t flags = 0;
+		int retval = csops_wrapper(getpid(), CS_OPS_STATUS, &flags, sizeof(flags));
+		return retval == 0 && (flags & CS_DEBUGGED) != 0;
 	}
 
 	// Wait for debugger to attach by polling CS_DEBUGGED flag (same as DolphiniOS)
