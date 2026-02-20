@@ -273,6 +273,7 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 				m_dualMapped   = true;
 				m_fromPool     = true;
 				memcpy(m_codeRW, code, size);
+				sys_icache_invalidate(m_code, m_size); // Flush instruction cache for RX view
 			}
 			else
 			{
@@ -293,6 +294,7 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 				                reinterpret_cast<uint8_t*>(rwPtr) >= reinterpret_cast<uint8_t*>(s_noTxmRWBase) &&
 				                reinterpret_cast<uint8_t*>(rwPtr) < reinterpret_cast<uint8_t*>(s_noTxmRWBase) + s_noTxmSize);
 				memcpy(m_codeRW, code, size);
+				sys_icache_invalidate(m_code, m_size); // Flush instruction cache for RX view
 			}
 			else
 			{
@@ -335,6 +337,7 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 			m_size = allocSize;
 			m_dualMapped = false;
 			m_fromPool = false;
+			sys_icache_invalidate(m_code, m_size); // Flush instruction cache
 		}
 	}
 #else
@@ -352,6 +355,7 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 	kern_return_t result = vm_protect(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), size, 0, protection);
 	assert(result == 0);
 	m_size = allocSize;
+	sys_icache_invalidate(m_code, m_size); // Flush instruction cache
 #endif
 #elif defined(MEMFUNC_USE_MMAP)
 	uint32 additionalMapFlags = 0;
