@@ -100,7 +100,7 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 - (void)viewDidAppear:(BOOL)animated
 {
 	// If debugger is already attached, just allocate and start immediately
-	if(CodeGen::IsDebuggerAttached())
+	if([JITInitializer isDebuggerAttached])
 	{
 		[JITInitializer allocateExecutableMemoryIfNeeded];
 		[self startEmulation];
