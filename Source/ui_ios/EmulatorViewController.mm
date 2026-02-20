@@ -99,6 +99,14 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 
 - (void)viewDidAppear:(BOOL)animated
 {
+	// If debugger is already attached, just allocate and start immediately
+	if(CodeGen::IsDebuggerAttached())
+	{
+		[JITInitializer allocateExecutableMemoryIfNeeded];
+		[self startEmulation];
+		return;
+	}
+
 	// Check if JIT is already available (non-TXM devices or debugger already attached)
 	if([JITInitializer isReady] && [JITInitializer isJITAvailable])
 	{
