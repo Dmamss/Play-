@@ -77,8 +77,10 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 	_txmActive = [self detectTXM];
 	NSLog(@"[StikDebugJIT] TXM active: %@", _txmActive ? @"YES" : @"NO");
 
-	// Install SIGTRAP handler
-	[self installTrapHandler];
+	// NOTE: Do NOT install SIGTRAP handler!
+	// StikDebug needs to handle the brk #0xf00d breakpoint directly.
+	// Installing our own handler interferes with StikDebug's ability to
+	// intercept and process the JIT allocation request.
 
 	// Set environment variable for MemoryFunction.cpp
 	if(_txmActive && [self isDebuggerAttached])
