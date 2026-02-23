@@ -99,11 +99,25 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 
 - (void)viewDidAppear:(BOOL)animated
 {
-	// If debugger is already attached, just allocate and start immediately
+	// If debugger is already attached, allocate JIT and verify before starting
 	if([JITInitializer isDebuggerAttached])
 	{
-		[JITInitializer allocateExecutableMemoryIfNeeded];
-		[self startEmulation];
+		// Allocate on background thread to avoid blocking UI if BreakGetJITMapping takes time
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		  [JITInitializer allocateExecutableMemoryIfNeeded];
+
+		  dispatch_async(dispatch_get_main_queue(), ^{
+			if([JITInitializer isJITAvailable])
+			{
+				[self startEmulation];
+			}
+			else
+			{
+				// JIT allocation failed even with debugger attached
+				[self showJITFailedError];
+			}
+		  });
+		});
 		return;
 	}
 

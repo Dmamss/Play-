@@ -277,8 +277,12 @@ CMemoryFunction::CMemoryFunction(const void* code, size_t size)
 			}
 			else
 			{
-				// TXM region not allocated or exhausted - fall back to Legacy
-				usedFallback = true;
+				// TXM region not allocated or exhausted
+				// DO NOT fall back to Legacy - it won't work on TXM devices (vm_protect forbidden)
+				// Leave m_code as nullptr - caller should check IsEmpty() and use interpreter
+				m_code = nullptr;
+				m_size = 0;
+				return;
 			}
 		}
 		else if(mode == CMemoryFunctioniOS::JitMode::LuckNoTXM)
