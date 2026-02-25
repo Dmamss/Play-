@@ -9,6 +9,7 @@
 #import <BreakpointJIT/BreakJIT.h>
 #include "AppConfig.h"
 #import "PreferenceDefs.h"
+#import "JITInitializer.h"
 #include <sys/sysctl.h>
 #include <sys/mman.h>
 #include <signal.h>
@@ -267,6 +268,21 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 			setenv("PLAY_HAS_TXM", "1", 1);
 			setenv("PLAY_JIT_ACTIVE", "1", 1);
 			NSLog(@"[StikDebugJIT] JIT confirmed active via callback");
+
+			// NOW it's safe to allocate JIT memory - StikDebug is actively listening
+			// The URL callback confirms StikDebug's GDB server is running and
+			// will intercept the brk #0xf00d breakpoint from BreakGetJITMapping
+			NSLog(@"[StikDebugJIT] Triggering JIT allocation after callback...");
+			dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			  [JITInitializer allocateExecutableMemoryIfNeeded];
+
+			  dispatch_async(dispatch_get_main_queue(), ^{
+				// Post notification that JIT is ready
+				[[NSNotificationCenter defaultCenter]
+				    postNotificationName:@"StikDebugJITReadyNotification"
+				                  object:nil];
+			  });
+			});
 		}
 		return YES;
 	}

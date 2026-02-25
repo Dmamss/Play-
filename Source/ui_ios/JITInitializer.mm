@@ -278,86 +278,94 @@ static dispatch_semaphore_t GetReadySemaphore()
 		return [self isJITAvailable];
 	}
 
-	// TXM mode - need to wait for StikDebug to attach
-	NSLog(@"[JITInitializer] Waiting for StikDebug to attach (timeout: %.1fs)...", timeout);
+	// TXM mode - need to wait for StikDebug callback
+	// NOTE: CS_DEBUGGED flag being set does NOT mean StikDebug is actively listening!
+	// StikDebug may have attached briefly to set the flag, then stopped monitoring.
+	// The allocation is triggered by the StikDebug URL callback (handleCallbackURL:)
+	// which posts StikDebugJITReadyNotification when complete.
+	NSLog(@"[JITInitializer] Waiting for StikDebug callback (timeout: %.1fs)...", timeout);
 
 	if(progressBlock)
 	{
 		progressBlock(0.0f, @"Waiting for StikDebug...");
 	}
 
-	// Poll for debugger attachment with progress updates
+	// Poll for JIT region allocation (triggered by StikDebug callback)
 	NSTimeInterval startTime = [[NSDate date] timeIntervalSince1970];
 	NSTimeInterval checkInterval = 0.5; // Check every 500ms
 	int iteration = 0;
 
 	while(true)
 	{
-		// Check if debugger is attached
-		if(CodeGen::IsDebuggerAttached())
+		// Check if JIT region was allocated (by StikDebug callback handler)
+		if(CodeGen::IsExecutableMemoryRegionAllocated())
 		{
-			NSLog(@"[JITInitializer] StikDebug attached! Allocating JIT memory...");
-
+			NSLog(@"[JITInitializer] JIT memory allocated successfully via callback");
 			if(progressBlock)
 			{
-				progressBlock(0.9f, @"Allocating JIT memory...");
+				progressBlock(1.0f, @"JIT Ready!");
 			}
-
-			// Debugger attached - now allocate the JIT region
-			[self allocateExecutableMemoryIfNeeded];
-
-			if(CodeGen::IsExecutableMemoryRegionAllocated())
-			{
-				NSLog(@"[JITInitializer] JIT memory allocated successfully");
-				if(progressBlock)
-				{
-					progressBlock(1.0f, @"JIT Ready!");
-				}
-				return YES;
-			}
-			else
-			{
-				NSLog(@"[JITInitializer] JIT memory allocation failed");
-				if(progressBlock)
-				{
-					progressBlock(1.0f, @"Allocation failed");
-				}
-				return NO;
-			}
+			return YES;
 		}
 
 		// Check timeout
 		NSTimeInterval elapsed = [[NSDate date] timeIntervalSince1970] - startTime;
 		if(elapsed >= timeout)
 		{
-			NSLog(@"[JITInitializer] Timeout waiting for StikDebug");
+			NSLog(@"[JITInitializer] Timeout waiting for StikDebug callback");
 			s_txmAllocationFailed = YES;
 			[self signalReady];
 			return NO;
 		}
 
-		// Update progress
+		// Update progress with helpful hints
 		if(progressBlock)
 		{
 			float progress = (float)(elapsed / timeout) * 0.8f; // Cap at 80% while waiting
 			NSString* status;
-			switch(iteration % 4)
+
+			// Show debugger status
+			BOOL debuggerAttached = CodeGen::IsDebuggerAttached();
+
+			if(debuggerAttached)
 			{
-			case 0:
-				status = @"Waiting for StikDebug...";
-				break;
-			case 1:
-				status = @"Open StikDebug app";
-				break;
-			case 2:
-				status = @"Enable JIT for Play!";
-				break;
-			case 3:
-				status = @"Then return here";
-				break;
-			default:
-				status = @"Waiting...";
-				break;
+				// CS_DEBUGGED is set but callback not received yet
+				switch(iteration % 3)
+				{
+				case 0:
+					status = @"Debugger detected...";
+					break;
+				case 1:
+					status = @"Enable JIT in StikDebug";
+					break;
+				case 2:
+					status = @"Waiting for callback...";
+					break;
+				default:
+					status = @"Waiting...";
+					break;
+				}
+			}
+			else
+			{
+				switch(iteration % 4)
+				{
+				case 0:
+					status = @"Waiting for StikDebug...";
+					break;
+				case 1:
+					status = @"Open StikDebug app";
+					break;
+				case 2:
+					status = @"Enable JIT for Play!";
+					break;
+				case 3:
+					status = @"Then return here";
+					break;
+				default:
+					status = @"Waiting...";
+					break;
+				}
 			}
 			progressBlock(progress, status);
 		}

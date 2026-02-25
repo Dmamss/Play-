@@ -24,10 +24,12 @@
 	// Initialize CodeGen JIT system with appropriate mode based on iOS version and TXM status
 	[JITInitializer initializeJITSystem];
 
-	// Start async JIT memory allocation as early as possible (if debugger already attached).
-	// On TXM devices (A15+), BreakGetJITMapping triggers a brk #0xf00d trap that blocks
-	// the calling thread — running it async prevents UI freezing.
-	if([jitService isJitActive])
+	// NOTE: Do NOT allocate JIT memory here for TXM devices!
+	// CS_DEBUGGED flag being set does NOT mean StikDebug is actively listening for breakpoints.
+	// StikDebug may have attached briefly to set the flag, then stopped monitoring.
+	// Wait for StikDebug callback (play://jit-enabled) before calling BreakGetJITMapping.
+	// Only non-TXM devices (iOS 26+ without A15+) can safely allocate early.
+	if([jitService isJitActive] && ![JITInitializer requiresTXM])
 	{
 		[JITInitializer beginAsyncAllocation];
 	}

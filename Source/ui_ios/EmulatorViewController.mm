@@ -99,10 +99,25 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 
 - (void)viewDidAppear:(BOOL)animated
 {
-	// If debugger is already attached, allocate JIT and verify before starting
-	if([JITInitializer isDebuggerAttached])
+	// Check if JIT is already available (allocation was done earlier)
+	if([JITInitializer isReady] && [JITInitializer isJITAvailable])
 	{
-		// Allocate on background thread to avoid blocking UI if BreakGetJITMapping takes time
+		[self startEmulation];
+		return;
+	}
+
+	// Check if this is a TXM device that needs StikDebug
+	if([JITInitializer requiresTXM])
+	{
+		// TXM devices: ALWAYS go through showWaitingForJITScreen
+		// Even if CS_DEBUGGED is set, we can't call BreakGetJITMapping directly
+		// because StikDebug may not be actively listening for the breakpoint.
+		// The allocation is triggered by the StikDebug URL callback.
+		[self showWaitingForJITScreen];
+	}
+	else if([JITInitializer isDebuggerAttached])
+	{
+		// Non-TXM with debugger attached: safe to allocate directly
 		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		  [JITInitializer allocateExecutableMemoryIfNeeded];
 
@@ -113,29 +128,14 @@ CPS2VM::NewFrameEvent::Connection g_newFrameConnection;
 			}
 			else
 			{
-				// JIT allocation failed even with debugger attached
 				[self showJITFailedError];
 			}
 		  });
 		});
-		return;
-	}
-
-	// Check if JIT is already available (non-TXM devices or debugger already attached)
-	if([JITInitializer isReady] && [JITInitializer isJITAvailable])
-	{
-		[self startEmulation];
-		return;
-	}
-
-	// Check if this is a TXM device that needs StikDebug
-	if([JITInitializer requiresTXM])
-	{
-		[self showWaitingForJITScreen];
 	}
 	else
 	{
-		// Non-TXM: just allocate and proceed
+		// Non-TXM without debugger: just allocate and proceed
 		[self showAllocatingJITScreen];
 	}
 }
