@@ -2,8 +2,10 @@
 //  PlayJIT.h
 //  Play! iOS - JIT Support for iOS 26+
 //
-//  Main interface for JIT memory allocation on iOS 26 with TXM
-//  Uses BreakpointJIT framework + StikDebug for external JIT activation
+//  Main interface for JIT memory allocation on iOS 26+.
+//  All devices on iOS 26+ (iPhone 12/A14 through latest) require
+//  StikDebug for JIT activation. Uses BreakpointJIT framework for
+//  TXM devices (A15+), dual-mapped memory for non-TXM (A14 etc.).
 //
 
 #ifndef PlayJIT_h
@@ -46,16 +48,17 @@ extern "C"
 
 	/**
 	 * Check if running on iOS 26+ with TXM active.
-	 * TXM (Thread Execution Manager) is present on A15+ and M2+ chips.
+	 * TXM (Trusted Execution Monitor) is present on A15+ and M2+ chips.
 	 *
-	 * @return true if TXM is active and external JIT activation required
+	 * @return true if TXM is active
 	 */
 	bool PlayJIT_HasTXM(void);
 
 	/**
 	 * Check if JIT is currently available.
-	 * On pre-iOS 26: always true (MAP_JIT works)
-	 * On iOS 26+ with TXM: true only if StikDebug has activated JIT
+	 * On pre-iOS 26: always true (Legacy mode works without debugger)
+	 * On iOS 26+: true only if StikDebug has activated JIT (all devices,
+	 *             including non-TXM like iPhone 12/A14)
 	 *
 	 * @return true if JIT memory can be allocated
 	 */
@@ -63,6 +66,7 @@ extern "C"
 
 	/**
 	 * Check if StikDebug activation is required.
+	 * On iOS 26+, all devices (TXM and non-TXM) need StikDebug for JIT.
 	 *
 	 * @return true if user needs to activate StikDebug first
 	 */

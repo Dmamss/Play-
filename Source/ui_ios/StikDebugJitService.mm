@@ -262,7 +262,10 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 		NSLog(@"[StikDebugJIT] JIT callback received from StikDebug");
 		if([self isDebuggerAttached])
 		{
-			setenv("PLAY_HAS_TXM", "1", 1);
+			if(_txmActive)
+			{
+				setenv("PLAY_HAS_TXM", "1", 1);
+			}
 			setenv("PLAY_JIT_ACTIVE", "1", 1);
 			NSLog(@"[StikDebugJIT] JIT confirmed active via callback");
 		}
@@ -335,7 +338,11 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 	if([self isDebuggerAttached])
 	{
 		NSLog(@"[StikDebugJIT] Already activated");
-		setenv("PLAY_HAS_TXM", "1", 1);
+		if(_txmActive)
+		{
+			setenv("PLAY_HAS_TXM", "1", 1);
+		}
+		setenv("PLAY_JIT_ACTIVE", "1", 1);
 		if(completion) completion(YES);
 		return;
 	}
@@ -386,7 +393,11 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 			  dispatch_async(dispatch_get_main_queue(), ^{
 				if(attached)
 				{
-					setenv("PLAY_HAS_TXM", "1", 1);
+					if(self->_txmActive)
+					{
+						setenv("PLAY_HAS_TXM", "1", 1);
+					}
+					setenv("PLAY_JIT_ACTIVE", "1", 1);
 					NSLog(@"[StikDebugJIT] JIT activated successfully!");
 				}
 				else

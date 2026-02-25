@@ -217,16 +217,25 @@ bool PlayJIT_HasTXM(void)
 
 bool PlayJIT_IsAvailable(void)
 {
-	if(!g_hasTXM)
+	if(g_iosVersion >= 26.0f)
 	{
-		return true; // Pre-TXM: always available
+		// iOS 26+: All devices (TXM and non-TXM) need CS_DEBUGGED for JIT.
+		// Non-TXM (e.g. iPhone 12/A14) uses LuckNoTXM which still requires
+		// debugger for mmap(PROT_READ | PROT_EXEC) on iOS 26.
+		return isDebugged();
 	}
-	return isDebugged(); // TXM: need debugger
+	return true; // Pre-iOS 26: always available via Legacy mode
 }
 
 bool PlayJIT_NeedsActivation(void)
 {
-	return g_hasTXM && !isDebugged();
+	if(g_iosVersion >= 26.0f)
+	{
+		// iOS 26+: All devices need StikDebug activation for JIT,
+		// including non-TXM devices like iPhone 12 (A14).
+		return !isDebugged();
+	}
+	return false; // Pre-iOS 26: no activation needed
 }
 
 float PlayJIT_GetIOSVersion(void)
@@ -289,9 +298,9 @@ static NSString* createJITScript(void)
 
 void PlayJIT_RequestActivation(void (^completion)(bool success))
 {
-	if(!g_hasTXM)
+	if(g_iosVersion < 26.0f)
 	{
-		NSLog(@"[PlayJIT] No TXM - activation not needed");
+		NSLog(@"[PlayJIT] Pre-iOS 26 - StikDebug activation not needed");
 		if(completion) completion(true);
 		return;
 	}

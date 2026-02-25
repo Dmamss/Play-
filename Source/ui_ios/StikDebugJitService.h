@@ -2,8 +2,9 @@
 //  StikDebugJitService.h
 //  Play! iOS - iOS 26 JIT Support via StikDebug
 //
-//  Provides JIT activation for iOS 26+ devices with TXM
-//  Works alongside existing AltServerJitService
+//  Provides JIT activation for all iOS 26+ devices (iPhone 12/A14 through latest).
+//  Both TXM (A15+) and non-TXM (A14 etc.) devices require StikDebug on iOS 26.
+//  Works alongside existing AltServerJitService.
 //
 
 #import <UIKit/UIKit.h>
@@ -16,16 +17,16 @@
 /// Register preferences for settings UI
 - (void)registerPreferences;
 
-/// Check if iOS 26 TXM is active (requires StikDebug)
+/// Check if device has TXM (A15+/M2+ chips)
 - (BOOL)hasTXM;
 
-/// Check if JIT is currently available (no TXM, or debugger attached)
+/// Check if JIT is currently available (pre-iOS 26, or debugger attached on iOS 26+)
 - (BOOL)isJitAvailable;
 
 /// Check if JIT is currently active (alias for isJitAvailable)
 - (BOOL)isJitActive;
 
-/// Check if StikDebug activation is needed
+/// Check if StikDebug activation is needed (all devices on iOS 26+)
 - (BOOL)needsActivation;
 
 /// Check if StikDebug app is installed on the device
