@@ -279,8 +279,8 @@ static void trapHandler(int sig, siginfo_t* info, void* context)
 			  dispatch_async(dispatch_get_main_queue(), ^{
 				// Post notification that JIT is ready
 				[[NSNotificationCenter defaultCenter]
-				    postNotificationName:@"StikDebugJITReadyNotification"
-				                  object:nil];
+					postNotificationName:@"StikDebugJITReadyNotification"
+					              object:nil];
 			  });
 			});
 		}
