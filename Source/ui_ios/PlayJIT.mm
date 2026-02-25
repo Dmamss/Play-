@@ -171,10 +171,12 @@ bool PlayJIT_Initialize(void)
 	installTrapHandler();
 
 	// Check current status
-	if(g_hasTXM)
+	bool debugged = isDebugged();
+	if(g_iosVersion >= 26.0f)
 	{
-		bool debugged = isDebugged();
-		NSLog(@"[PlayJIT] Debugger attached: %@", debugged ? @"YES" : @"NO");
+		NSLog(@"[PlayJIT] iOS 26+ detected — mode: %s, debugger: %@",
+		      g_hasTXM ? "LuckTXM" : "LuckNoTXM",
+		      debugged ? @"YES" : @"NO");
 
 		if(!debugged)
 		{
@@ -183,7 +185,7 @@ bool PlayJIT_Initialize(void)
 	}
 	else
 	{
-		NSLog(@"[PlayJIT] No TXM - JIT available via MAP_JIT");
+		NSLog(@"[PlayJIT] Pre-iOS 26 — Legacy JIT mode");
 	}
 
 	g_initialized = true;
